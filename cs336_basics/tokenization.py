@@ -61,7 +61,7 @@ def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str])
     input_string = open(input_path, "r").read()
     pretokenization_counts = defaultdict(int)
     split_regexp = "|".join(re.escape(s) for s in special_tokens)
-    for s in re.split(split_regexp):
+    for s in re.split(split_regexp, input_string):
         pretokenize(s, pretokenization_counts)
     num_merges = vocab_size - 256 - len(special_tokens)
     assert num_merges >= 0
