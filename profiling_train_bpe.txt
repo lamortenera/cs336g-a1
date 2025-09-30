@@ -1,0 +1,47 @@
+INFO:root:Function pretokenize_file took 422.879 seconds to execute
+INFO:root:Function train_tokenizer_from_counters took 45.094 seconds to execute
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+        1    0.000    0.000  873.407  873.407 tokenization.py:155(train_tokenizer)
+        2    0.029    0.015  873.407  436.704 utils.py:17(wrapper)
+        1    0.002    0.002  826.108  826.108 tokenization.py:124(pretokenize_file)
+        1    0.318    0.318  826.040  826.040 tokenization.py:101(pretokenize_file_single_worker)
+      112  557.177    4.975  815.269    7.279 tokenization.py:10(pretokenize)
+536592272  108.323    0.000  108.323    0.000 {method 'encode' of 'str' objects}
+536592168  104.493    0.000  104.493    0.000 {method 'group' of '_regex.Match' objects}
+        1    0.265    0.265   47.269   47.269 tokenization.py:75(train_tokenizer_from_counters)
+     9743   43.031    0.004   43.034    0.004 tokenization.py:29(get_best_pair)
+  2717811    2.738    0.000   41.877    0.000 regex.py:340(finditer)
+  2717924    9.077    0.000   37.734    0.000 regex.py:449(_compile)
+  5436060    7.884    0.000   23.663    0.000 enum.py:1607(__and__)
+ 16308278    7.635    0.000   11.794    0.000 enum.py:1589(_get_value)
+       18    0.001    0.000    7.240    0.402 _jit_internal.py:1025(_overload)
+     1110    7.139    0.006    7.139    0.006 {method 'read' of '_io.BufferedReader' objects}
+30031843/30031795    4.560    0.000    4.563    0.000 {built-in method builtins.isinstance}
+  5438975    2.390    0.000    3.989    0.000 enum.py:695(__call__)
+     9743    2.727    0.000    3.532    0.000 tokenization.py:39(update_parts_and_pairs)
+      157    0.006    0.000    3.461    0.022 __init__.py:1(<module>)
+      112    0.001    0.000    3.396    0.030 regex.py:314(split)
+      112    3.389    0.030    3.389    0.030 {method 'split' of '_regex.Pattern' objects}
+      284    3.371    0.012    3.371    0.012 {method 'decode' of 'bytes' objects}
+  5438973    1.598    0.000    1.599    0.000 enum.py:1156(__new__)
+  2717924    1.507    0.000    1.507    0.000 regex.py:471(complain_unused_args)
+  2717811    1.411    0.000    1.411    0.000 {method 'finditer' of '_regex.Pattern' objects}
+  2739036    0.686    0.000    0.686    0.000 {method 'get' of 'dict' objects}
+  927/835    0.002    0.000    0.654    0.001 <frozen importlib._bootstrap>:806(module_from_spec)
+      4/2    0.000    0.000    0.632    0.316 <frozen importlib._bootstrap_external>:1318(create_module)
+      4/2    0.516    0.129    0.632    0.316 {built-in method _imp.create_dynamic}
+   101/66    0.007    0.000    0.621    0.009 _ops.py:279(py_impl)
+2732874/2732870    0.548    0.000    0.552    0.000 {built-in method builtins.hasattr}
+     10/8    0.000    0.000    0.457    0.057 _ops.py:147(py_functionalize_impl)
+        1    0.241    0.241    0.338    0.338 tokenization.py:18(count_pair_frequencies)
+  1462809    0.337    0.000    0.337    0.000 {method 'add' of 'set' objects}
+2379754/2379375    0.290    0.000    0.290    0.000 {built-in method builtins.len}
+  1079818    0.285    0.000    0.285    0.000 {method 'discard' of 'set' objects}
+      113    0.001    0.000    0.238    0.002 custom_ops.py:158(__init__)
+      113    0.000    0.000    0.234    0.002 custom_ops.py:559(_register_to_dispatcher)
+      887    0.007    0.000    0.178    0.000 <frozen importlib._bootstrap_external>:1093(get_code)
+        4    0.000    0.000    0.168    0.042 functional.py:1(<module>)
+       10    0.000    0.000    0.164    0.016 linear.py:1(<module>)
