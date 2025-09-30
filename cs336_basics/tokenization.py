@@ -7,12 +7,12 @@ from .utils import stopwatch
 from multiprocessing import Pool
 
 PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-def pretokenize(chunk: str, counts: defaultdict[bytes, int], special_tokens: list[str]):
+def pretokenize(chunk: str, counts: defaultdict[str, int], special_tokens: list[str]):
     split_regexp = re.compile("|".join(re.escape(s) for s in special_tokens))
 
     for s in split_regexp.split(chunk):
         for part in PAT.finditer(s):
-            counts[part.group(0).encode("utf8")] += 1
+            counts[part.group(0)] += 1
     return counts
 
 def count_pair_frequencies(parts):
@@ -72,7 +72,7 @@ def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indic
             pair_indices[(part[i], part[i+1])].add(part_index)
 
 
-def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, special_tokens: list[str]):
+def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, special_tokens: list[str]):
     vocab = {}
     for tok in special_tokens:
         vocab[len(vocab)] = tok.encode("utf8")
@@ -81,7 +81,7 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
     
 
     byte_pairs = []
-    parts = [([(b).to_bytes() for b in part], c) for part, c in counters.items()]
+    parts = [([(b).to_bytes() for b in part.encode("utf8")], c) for part, c in counters.items()]
     pairs, pair_indices = count_pair_frequencies(parts)
 
     for _ in range(num_merges):
