@@ -4,7 +4,7 @@ from collections import defaultdict
 PAT = r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+"""
 def pretokenize(s: str, counts: defaultdict[bytes, int]):
     for part in re.finditer(PAT, s):
-        counts[part.encode("utf8")] += 1
+        counts[part.group(0).encode("utf8")] += 1
     return counts
 
 def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, special_tokens: list[str]):
