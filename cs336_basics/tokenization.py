@@ -7,6 +7,45 @@ def pretokenize(s: str, counts: defaultdict[bytes, int]):
         counts[part.group(0).encode("utf8")] += 1
     return counts
 
+def count_pair_frequencies(parts):
+    pairs = defaultdict(int)
+    for part, c in parts:
+        for i in range(len(part) - 1):
+            pairs[(part[i], part[i+1])] += c
+    return pairs
+
+def get_best_pair(pairs):
+    best_score = None
+    best_pair = None
+    for pair, c in pairs.items():
+        score = (c, pair)
+        if best_score is None or score > best_score:
+            best_score = score
+            best_pair = pair
+    return best_pair 
+
+def update_parts(parts, best_pair):
+    merged_best_pair = b"".join(best_pair)
+    for part, _ in parts:
+        i = 0
+        j = 0
+        while i < len(part) - 1:
+            if (part[i], part[i+1]) == best_pair:
+                part[j] = merged_best_pair
+                i += 2
+                j += 1
+            else:
+                part[j] = part[i]
+                i += 1
+                j += 1
+        if i < len(part):
+            part[j] = part[i]
+            i += 1
+            j += 1
+
+        del part[j:]
+
+
 def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, special_tokens: list[str]):
     vocab = {}
     for tok in special_tokens:
@@ -16,44 +55,19 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
     
 
     byte_pairs = []
-    parts = {tuple((b).to_bytes() for b in part): c for part, c in counters.items()}
+    parts = [([(b).to_bytes() for b in part], c) for part, c in counters.items()]
     for _ in range(num_merges):
-        pairs = defaultdict(int)
-        for part, c in parts.items():
-            for i in range(len(part) - 1):
-                pairs[(part[i], part[i+1])] += c
+        pairs = count_pair_frequencies(parts)
 
         if not pairs:
             return vocab
 
-        best_score = None
-        best_pair = None
-        for pair, c in pairs.items():
-            score = (c, pair)
-            if best_score is None or score > best_score:
-                best_score = score
-                best_pair = pair
+        best_pair = get_best_pair(pairs)
         merged_best_pair = b"".join(best_pair)
         vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
 
-        new_parts = {}
-        for part, c in parts.items():
-            sub_parts = []
-
-            i = 0
-            while i < len(part) - 1:
-                if (part[i], part[i+1]) == best_pair:
-                    sub_parts.append(merged_best_pair)
-                    i += 2
-                else:
-                    sub_parts.append(part[i])
-                    i += 1
-            if i < len(part):
-                sub_parts.append(part[i])
-
-            new_parts[tuple(sub_parts)] = c
-        parts = new_parts
+        update_parts(parts, best_pair)
     return vocab, byte_pairs
 
 

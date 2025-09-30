@@ -1,0 +1,14 @@
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+     67/1    0.000    0.000   20.781   20.781 {built-in method builtins.exec}
+        1    0.001    0.001   20.781   20.781 profile_tokenizer.py:1(<module>)
+        1    0.004    0.004   20.723   20.723 tokenization.py:74(train_tokenizer)
+        1    0.134    0.134   18.826   18.826 tokenization.py:49(train_tokenizer_from_counters)
+      743    7.733    0.010   10.691    0.014 tokenization.py:27(update_parts)
+      743    7.075    0.010    7.670    0.010 tokenization.py:10(count_pair_frequencies)
+36329566/36329443    3.554    0.000    3.554    0.000 {built-in method builtins.len}
+     6458    1.278    0.000    1.870    0.000 tokenization.py:5(pretokenize)
+      743    0.318    0.000    0.319    0.000 tokenization.py:17(get_best_pair)
+  1263140    0.244    0.000    0.244    0.000 {method 'encode' of 'str' objects}
+  1263131    0.244    0.000    0.244    0.000 {method 'group' of '_regex.Match' objects}
