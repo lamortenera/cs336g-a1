@@ -18,7 +18,7 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
     byte_pairs = []
     parts = {tuple((b).to_bytes() for b in part): c for part, c in counters.items()}
     for _ in range(num_merges):
-        pairs = collections.defaultdict(int)
+        pairs = defaultdict(int)
         for part, c in parts.items():
             for i in range(len(part) - 1):
                 pairs[(part[i], part[i+1])] += c
@@ -34,7 +34,7 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
                 best_score = score
                 best_pair = pair
         merged_best_pair = b"".join(best_pair)
-        vocab[merged_best_pair] = len(vocab)
+        vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
 
         new_parts = {}
