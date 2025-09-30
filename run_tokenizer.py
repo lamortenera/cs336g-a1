@@ -27,5 +27,10 @@ if __name__ == "__main__":
         merges_path = args.output_path_prefix + "merges.txt"
         token_utils.save_vocab_and_merges(vocab, merges, vocab_path=vocab_path, merges_path=merges_path)
 
+    longest_token = None
+    for token in vocab.values():
+        if longest_token is None or len(longest_token) < len(token):
+            longest_token = token
+    print("Longest token: ", longest_token)
 
 
