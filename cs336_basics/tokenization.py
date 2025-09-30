@@ -9,10 +9,14 @@ def pretokenize(s: str, counts: defaultdict[bytes, int]):
 
 def count_pair_frequencies(parts):
     pairs = defaultdict(int)
-    for part, c in parts:
+    pair_indices = defaultdict(set)
+    for part_index, (part, c) in enumerate(parts):
         for i in range(len(part) - 1):
-            pairs[(part[i], part[i+1])] += c
-    return pairs
+            key = (part[i], part[i+1])
+            pairs[key] += c
+            pair_indices[key].add(part_index)
+
+    return pairs, pair_indices
 
 def get_best_pair(pairs):
     best_score = None
@@ -24,9 +28,18 @@ def get_best_pair(pairs):
             best_pair = pair
     return best_pair 
 
-def update_parts(parts, best_pair):
+def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indices):
+    del pairs[best_pair]
+    del pair_indices[best_pair]
     merged_best_pair = b"".join(best_pair)
-    for part, _ in parts:
+    for part_index in affected_indices:
+        part, c = parts[part_index]
+        for i in range(len(part)-1):
+            key = (part[i], part[i+1])
+            if key != best_pair:
+              pairs[key] -= c
+              pair_indices[key].discard(part_index)
+
         i = 0
         j = 0
         while i < len(part) - 1:
@@ -38,12 +51,17 @@ def update_parts(parts, best_pair):
                 part[j] = part[i]
                 i += 1
                 j += 1
+
         if i < len(part):
             part[j] = part[i]
             i += 1
             j += 1
 
         del part[j:]
+
+        for i in range(len(part) -1):
+            pairs[(part[i], part[i+1])] += c
+            pair_indices[(part[i], part[i+1])].add(part_index)
 
 
 def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, special_tokens: list[str]):
@@ -56,8 +74,9 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
 
     byte_pairs = []
     parts = [([(b).to_bytes() for b in part], c) for part, c in counters.items()]
+    pairs, pair_indices = count_pair_frequencies(parts)
+
     for _ in range(num_merges):
-        pairs = count_pair_frequencies(parts)
 
         if not pairs:
             return vocab
@@ -67,7 +86,7 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
         vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
 
-        update_parts(parts, best_pair)
+        update_parts_and_pairs(parts, pairs, pair_indices, best_pair, pair_indices[best_pair])
     return vocab, byte_pairs
 
 
