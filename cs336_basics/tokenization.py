@@ -12,7 +12,7 @@ def train_tokenizer_from_counters(counters: dict[int, bytes], num_merges: int, s
     for tok in special_tokens:
         vocab[len(vocab)] = tok.encode("utf8")
     for i in range(256):
-        vocab[len(vocab)] = chr(i).encode("utf8")
+        vocab[len(vocab)] = (i).to_bytes()
     
 
     byte_pairs = []
