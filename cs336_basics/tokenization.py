@@ -3,6 +3,7 @@ import logging
 import os
 from collections import defaultdict
 from .pretokenization_example import find_chunk_boundaries
+from .token_utils import save_vocab_and_merges, load_vocab_and_merges
 from .utils import stopwatch
 from multiprocessing import Pool
 
@@ -40,12 +41,13 @@ def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indic
     del pairs[best_pair]
     del pair_indices[best_pair]
     merged_best_pair = b"".join(best_pair)
+    count_deltas = defaultdict(int)
     for part_index in affected_indices:
         part, c = parts[part_index]
         for i in range(len(part)-1):
             key = (part[i], part[i+1])
             if key != best_pair:
-              pairs[key] -= c
+              count_deltas[key] -= c
               pair_indices[key].discard(part_index)
 
         i = 0
@@ -68,8 +70,71 @@ def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indic
         del part[j:]
 
         for i in range(len(part) -1):
-            pairs[(part[i], part[i+1])] += c
+            count_deltas[(part[i], part[i+1])] += c
             pair_indices[(part[i], part[i+1])].add(part_index)
+    affected_pairs = set()
+    for pair, delta in count_deltas.items():
+        if delta != 0:
+            affected_pairs.add(pair)
+            pairs[pair] += delta
+    return affected_pairs
+
+
+class PairHeap:
+    def __init__(self, pairs):
+        self._tree = [[c, pair] for pair, c in pairs.items()]
+        self._tree.sort(reverse=True)
+        self._pointers = {pair: i for i, (_, pair) in enumerate(self._tree)}
+
+    def set_count(self, pair, c):
+        index = self._pointers.get(pair)
+        if index is None:
+            self.add_pair(pair, c)
+            return
+        curr_count = self._tree[index][0]
+        self._tree[index][0] = c
+        if c > curr_count:
+            self._bubble_up(index)
+        elif c < curr_count:
+            self._bubble_down(index)
+    
+    def add_pair(self, pair, c):
+        assert pair not in self._pointers.keys()
+        index = len(self._tree)
+        self._pointers[pair] = index
+        self._tree.append([c, pair])
+        self._bubble_up(index)
+
+    def top(self):
+        return tuple(self._tree[0])
+
+    def _swap(self, i1, i2):
+        p1 = self._tree[i1]
+        p2 = self._tree[i2]
+        self._tree[i2] = p1
+        self._tree[i1] = p2
+        self._pointers[p1[1]] = i2
+        self._pointers[p2[1]] = i1
+
+
+    def _bubble_up(self, index):
+        while index > 0:
+            parent_index = ((index + 1) // 2) - 1
+            if self._tree[index] <= self._tree[parent_index]:
+                return
+            self._swap(parent_index, index)
+            index = parent_index
+
+    def _bubble_down(self, index):
+        while (index+1)*2 - 1 < len(self._tree):
+            left_child_index = (index + 1)*2 - 1
+            child_index = left_child_index
+            if child_index + 1 < len(self._tree) and self._tree[child_index + 1] > self._tree[child_index]:
+                child_index += 1
+            if self._tree[child_index] <= self._tree[index]:
+                return
+            self._swap(child_index, index)
+            index = child_index
 
 
 def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, special_tokens: list[str]):
@@ -83,18 +148,23 @@ def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, spe
     byte_pairs = []
     parts = [([(b).to_bytes() for b in part.encode("utf8")], c) for part, c in counters.items()]
     pairs, pair_indices = count_pair_frequencies(parts)
+    pair_heap = PairHeap(pairs)
 
     for _ in range(num_merges):
+        c, best_pair = pair_heap.top()
 
-        if not pairs:
+        if c <= 0:
             return vocab
 
-        best_pair = get_best_pair(pairs)
+        pair_heap.set_count(best_pair, 0)
         merged_best_pair = b"".join(best_pair)
         vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
 
-        update_parts_and_pairs(parts, pairs, pair_indices, best_pair, pair_indices[best_pair])
+        affected_pairs = update_parts_and_pairs(parts, pairs, pair_indices, best_pair, pair_indices[best_pair])
+        for pair in affected_pairs:
+            pair_heap.set_count(pair, pairs[pair])
+
     return vocab, byte_pairs
 
 
@@ -161,4 +231,26 @@ def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str],
     assert num_merges >= 0
     vocab, merges = stopwatch(train_tokenizer_from_counters)(pretokenization_counts, num_merges, special_tokens)
     return vocab, merges
+
+
+
+#class Tokenizer(object):
+#    def __init__(self, vocab: dict[int, bytes], merges: list[typle[bytes, bytes]], special_tokens: list[str] | None = None):
+#        self._vocab = vocab
+#        self._reverse_vocab = {v: k for k, v in vocab.items()}
+#        self._merges = merges
+#        self._special_tokens = special_tokens if special_tokens is not None else []
+#
+#    @classmethod
+#    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+#        vocab, merges = load_vocab_and_merges(vocab_filepath, merges_filepath)
+#        return cls(vocab, merges, special_tokens)
+
+    
+
+
+
+
+
+
 

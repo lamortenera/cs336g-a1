@@ -1,7 +1,7 @@
 import json
 import time
 
-from cs336_basics import token_utils
+from cs336_basics import token_utils, tokenization
 
 from .adapters import run_train_bpe
 from .common import FIXTURES_PATH
@@ -94,3 +94,18 @@ def test_train_bpe_special_tokens(snapshot):
             "merges": merges,
         },
     )
+
+def test_train_pair_heap():
+   pairs = {(b"a", b"b"): 4, (b"ab", b"c"): 5, (b"f", b"g"): 2}
+   heap = tokenization.PairHeap(pairs)
+
+   p = (b"ab", b"c")
+   assert heap.top() == (5, p)
+   heap.set_count(p, 10)
+   assert heap.top() == (10, p), str(heap._tree) + " " + str(heap._pointers)
+   heap.set_count(p, 0)
+   assert heap.top() == (4, (b"a", b"b")), str(heap._tree) + " " + str(heap._pointers)
+   heap.add_pair((b"tre", b"k"), 8)
+   assert heap.top() == (8, (b"tre", b"k"))
+
+
