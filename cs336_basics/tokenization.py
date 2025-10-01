@@ -8,9 +8,17 @@ from .token_utils import save_vocab_and_merges, load_vocab_and_merges
 from .utils import stopwatch
 from multiprocessing import Pool
 
+def special_tokens_regexp(special_tokens: list[str]):
+    # Make sure that longer tokens appear first
+    # So that if a token is the composition of other tokens
+    # it won't get split.
+    sorted_special_tokens = sorted(special_tokens, key=lambda x: -len(x))
+    return re.compile("|".join(re.escape(s) for s in sorted_special_tokens))
+
+
 PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
 def pretokenize(chunk: str, counts: defaultdict[str, int], special_tokens: list[str]):
-    split_regexp = re.compile("|".join(re.escape(s) for s in special_tokens))
+    split_regexp = special_tokens_regexp(special_tokens)
 
     for s in split_regexp.split(chunk):
         for part in PAT.finditer(s):
@@ -233,16 +241,15 @@ def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str],
     vocab, merges = stopwatch(train_tokenizer_from_counters)(pretokenization_counts, num_merges, special_tokens)
     return vocab, merges
 
-
 class Tokenizer(object):
     def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
         self._vocab = vocab
         self._reverse_vocab = {v: k for k, v in vocab.items()}
         self._merges = {pair: i for i, pair in enumerate(merges)}
         self._special_tokens = special_tokens if special_tokens is not None else []
-        for t in special_tokens:
+        for t in self._special_tokens:
             assert t.encode("utf8") in self._reverse_vocab.keys()
-        self._special_tokens_regexp = re.compile("|".join(re.escape(s) for s in special_tokens))
+        self._special_tokens_regexp = special_tokens_regexp(self._special_tokens)
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -259,7 +266,7 @@ class Tokenizer(object):
                 merge_priority = self._merges.get(pair)
                 if merge_priority is None:
                     continue
-                if best_score is None or best_score > merge_priority
+                if best_score is None or best_score > merge_priority:
                     best_score = merge_priority
                     best_index = i
             if best_index is None:
@@ -271,14 +278,16 @@ class Tokenizer(object):
 
     def _encode_no_special_tokens(self, text: str):
         result = []
-        for part in PAT.finditer(text):
-            result += self._encode_pretokenized(part)
+        for m in PAT.finditer(text):
+            result += self._encode_pretokenized(m.group(0))
         return result
 
     def encode(self, text: str) -> list[int]:
+        if not self._special_tokens:
+            return self._encode_no_special_tokens(text)
         result = []
         last_start = 0
-        for match in self._special_tokens_regexp.finditer(text):
+        for m in self._special_tokens_regexp.finditer(text):
             result += self._encode_no_special_tokens(text[last_start:m.start()])
             result.append(self._reverse_vocab[m.group(0).encode("utf8")])
             last_start = m.end()
@@ -292,5 +301,5 @@ class Tokenizer(object):
                 yield token
 
     def decode(self,  ids: list[int]) -> str:
-        return b"".join(self._vocab[token] for token in ids).decode("utf8")
+        return b"".join(self._vocab[token] for token in ids).decode("utf8", errors="replace")
 
