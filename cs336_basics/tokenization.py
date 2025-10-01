@@ -2,6 +2,7 @@ import regex as re
 import logging
 import os
 from collections import defaultdict
+from collections.abc import Iterable, Iterator
 from .pretokenization_example import find_chunk_boundaries
 from .token_utils import save_vocab_and_merges, load_vocab_and_merges
 from .utils import stopwatch
@@ -233,24 +234,63 @@ def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str],
     return vocab, merges
 
 
+class Tokenizer(object):
+    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
+        self._vocab = vocab
+        self._reverse_vocab = {v: k for k, v in vocab.items()}
+        self._merges = {pair: i for i, pair in enumerate(merges)}
+        self._special_tokens = special_tokens if special_tokens is not None else []
+        for t in special_tokens:
+            assert t.encode("utf8") in self._reverse_vocab.keys()
+        self._special_tokens_regexp = re.compile("|".join(re.escape(s) for s in special_tokens))
 
-#class Tokenizer(object):
-#    def __init__(self, vocab: dict[int, bytes], merges: list[typle[bytes, bytes]], special_tokens: list[str] | None = None):
-#        self._vocab = vocab
-#        self._reverse_vocab = {v: k for k, v in vocab.items()}
-#        self._merges = merges
-#        self._special_tokens = special_tokens if special_tokens is not None else []
-#
-#    @classmethod
-#    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
-#        vocab, merges = load_vocab_and_merges(vocab_filepath, merges_filepath)
-#        return cls(vocab, merges, special_tokens)
+    @classmethod
+    def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
+        vocab, merges = load_vocab_and_merges(vocab_filepath, merges_filepath)
+        return cls(vocab, merges, special_tokens)
 
+    def _encode_pretokenized(self, text: str):
+        bytes_list = [(b).to_bytes() for b in text.encode("utf8")]
+        while True:
+            best_index = None
+            best_score = None
+            for i in range(len(bytes_list) - 1):
+                pair = (bytes_list[i], bytes_list[i+1])
+                merge_priority = self._merges.get(pair)
+                if merge_priority is None:
+                    continue
+                if best_score is None or best_score > merge_priority
+                    best_score = merge_priority
+                    best_index = i
+            if best_index is None:
+                break
+            bytes_list[best_index] = b"".join(bytes_list[best_index:best_index+2])
+            del bytes_list[best_index + 1]
+        return [self._reverse_vocab[b] for b in bytes_list]
+
+
+    def _encode_no_special_tokens(self, text: str):
+        result = []
+        for part in PAT.finditer(text):
+            result += self._encode_pretokenized(part)
+        return result
+
+    def encode(self, text: str) -> list[int]:
+        result = []
+        last_start = 0
+        for match in self._special_tokens_regexp.finditer(text):
+            result += self._encode_no_special_tokens(text[last_start:m.start()])
+            result.append(self._reverse_vocab[m.group(0).encode("utf8")])
+            last_start = m.end()
+        if last_start != len(text):
+            result += self._encode_no_special_tokens(text[last_start:])
+        return result
     
+    def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
+        for text in iterable:
+            for token in self.encode(text):
+                yield token
 
-
-
-
-
-
+    def decode(self,  ids: list[int]) -> str:
+        return b"".join(self._vocab[token] for token in ids).decode("utf8")
 
