@@ -1,8 +1,11 @@
 from cs336_basics import tokenization, token_utils
 import logging
 import argparse
+import sys
 
 if __name__ == "__main__":
+    print("Running command:\n" + " ".join(sys.argv[:]))
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--input_path", help="Path to text file with data for training the tokenizer", required=True)
     parser.add_argument("--output_path_prefix", help="Path where to write the tokenizer info, if absent, nothing is written")
@@ -11,6 +14,7 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", help="Number of workers for the pretokenization phase", type=int, default=1)
     parser.add_argument("--log_level", help="Log level", choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], default="INFO")
     args = parser.parse_args()
+
 
     logging.getLogger().setLevel(getattr(logging, args.log_level))
 
