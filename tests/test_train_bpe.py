@@ -108,4 +108,13 @@ def test_train_pair_heap():
    heap.add_pair((b"tre", b"k"), 8)
    assert heap.top() == (8, (b"tre", b"k"))
 
+   all_pairs = []
+   while True:
+       pair = heap.pop()
+       if pair is None:
+           return
+       all_pairs.append(pair)
+   assert all_pairs == [(8, (b"tre", b"k")), (4, (b"b", b"c")), (2, (b"f", b"g")), (0, (b"ab", b"c"))]
+
+
 

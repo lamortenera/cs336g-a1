@@ -1,4 +1,5 @@
 import regex as re
+import time
 import logging
 import os
 from collections import defaultdict
@@ -7,6 +8,7 @@ from .pretokenization_example import find_chunk_boundaries
 from .token_utils import save_vocab_and_merges, load_vocab_and_merges
 from .utils import stopwatch
 from multiprocessing import Pool
+import numpy as np
 
 def special_tokens_regexp(special_tokens: list[str]):
     # Make sure that longer tokens appear first
@@ -114,8 +116,21 @@ class PairHeap:
         self._tree.append([c, pair])
         self._bubble_up(index)
 
+
     def top(self):
+        if not self._tree:
+            return None
         return tuple(self._tree[0])
+
+    def pop(self):
+        result = self.top()
+        if not result:
+            return None
+        self._swap(0, len(self._tree) - 1)
+        del self._tree[len(self._tree) - 1]
+        del self._pointers[result[1]]
+        self._bubble_down(0)
+        return result 
 
     def _swap(self, i1, i2):
         p1 = self._tree[i1]
@@ -160,12 +175,11 @@ def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, spe
     pair_heap = PairHeap(pairs)
 
     for _ in range(num_merges):
-        c, best_pair = pair_heap.top()
-
-        if c <= 0:
+        el = pair_heap.pop()
+        if el is None:
             return vocab
+        c, best_pair = el
 
-        pair_heap.set_count(best_pair, 0)
         merged_best_pair = b"".join(best_pair)
         vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
@@ -200,8 +214,7 @@ def pretokenize_file_single_worker_wrapper(args):
 def ceiling_division(n, d):
     return -(n // -d)
 
-def pretokenize_file(input_path: str, special_tokens: list[str], max_chunk_bytes: int, num_workers: int):
-    
+def get_boundaries(input_path: str, max_chunk_bytes: int, num_workers: int):
     with open(input_path, "rb") as file:
         file.seek(0, os.SEEK_END)
         file_size = file.tell()
@@ -213,7 +226,11 @@ def pretokenize_file(input_path: str, special_tokens: list[str], max_chunk_bytes
 
         boundaries = find_chunk_boundaries(file, num_chunks, b"<|endoftext|>")
         logging.info("File size: %d, max chunk bytes: %d, boundaries len: %d", file_size, max_chunk_bytes, len(boundaries))
+    return boundaries
     
+
+def pretokenize_file(input_path: str, special_tokens: list[str], max_chunk_bytes: int, num_workers: int):
+    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers) 
     
     if num_workers == 1:
         return pretokenize_file_single_worker(input_path, special_tokens, boundaries)
@@ -256,8 +273,63 @@ class Tokenizer(object):
         vocab, merges = load_vocab_and_merges(vocab_filepath, merges_filepath)
         return cls(vocab, merges, special_tokens)
 
+#    def _encode_pretokenized2(self, text: str):
+#        # This is slower than the simple aproach...
+#        encoded_text = text.encode("utf8")
+#        single_token = self._reverse_vocab.get(encoded_text)
+#        if single_token is not None:
+#            return [single_token]
+#        bytes_list = [(b).to_bytes() for b in encoded_text] 
+#        pairs = defaultdict(list)
+#        pair_heap = PairHeap({})
+#        for i in range(len(bytes_list) - 1):
+#            pair = (bytes_list[i], bytes_list[i+1])
+#            prio = self._merges.get(pair)
+#            if prio is not None:
+#                pair_heap.set_count(pair, -prio)
+#                pairs[pair].append(i)
+#
+#        while True:
+#            el = pair_heap.pop()
+#            if el is None:
+#                break
+#            _, pair = el
+#            merged_pair = b"".join(pair)
+#            occurrences = pairs.pop(pair)
+#            for o in occurrences:
+#                o_next = o + len(pair[0])
+#                found_pair = bytes_list[o], bytes_list[o_next]
+#                if found_pair != pair:
+#                    continue
+#                bytes_list[o] = merged_pair
+#                bytes_list[o_next] = b""
+#                o_nextnext = o + len(merged_pair)
+#                if o_nextnext < len(bytes_list):
+#                    assert bytes_list[o_nextnext] != b""
+#                    next_pair = (merged_pair, bytes_list[o_nextnext])
+#                    prio = self._merges.get(next_pair)
+#                    if prio is not None:
+#                        pair_heap.set_count(next_pair, -prio)
+#                        pairs[next_pair].append(o)
+#                if o > 0:
+#                    o_prev = o - 1
+#                    while bytes_list[o_prev] == b"":
+#                        o_prev -= 1
+#                    prev_pair = (bytes_list[o_prev], merged_pair)
+#                    prio = self._merges.get(prev_pair)
+#                    if prio is not None:
+#                        pair_heap.set_count(prev_pair, -prio)
+#                        pairs[prev_pair].append(o_prev)
+#
+#        return [self._reverse_vocab[b] for b in bytes_list if b != b""]
+
+
     def _encode_pretokenized(self, text: str):
-        bytes_list = [(b).to_bytes() for b in text.encode("utf8")]
+        encoded_text = text.encode("utf8")
+        single_token = self._reverse_vocab.get(encoded_text)
+        if single_token is not None:
+            return [single_token]
+        bytes_list = [(b).to_bytes() for b in encoded_text] 
         while True:
             best_index = None
             best_score = None
@@ -271,7 +343,7 @@ class Tokenizer(object):
                     best_index = i
             if best_index is None:
                 break
-            bytes_list[best_index] = b"".join(bytes_list[best_index:best_index+2])
+            bytes_list[best_index] = b"".join(bytes_list[best_index:(best_index+2)])
             del bytes_list[best_index + 1]
         return [self._reverse_vocab[b] for b in bytes_list]
 
@@ -303,3 +375,37 @@ class Tokenizer(object):
     def decode(self,  ids: list[int]) -> str:
         return b"".join(self._vocab[token] for token in ids).decode("utf8", errors="replace")
 
+
+def tokenize_file(tokenizer: Tokenizer, input_path: str, max_chunk_bytes: int, output_path: str):
+    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers=1) 
+
+    stats = {}
+    
+    overall_start_time = time.time()
+    with open(input_path, "rb") as file:
+        with open(output_path, "wb") as outfile:
+            start = boundaries[0]
+            file.seek(start)
+            for i, end in enumerate(boundaries[1:]):
+                chunk_size = end - start
+                logging.info("Reading a chunk of size: %d, (%d/%d)", chunk_size, i+1, len(boundaries) - 1)
+                chunk = file.read(chunk_size).decode("utf-8", errors="ignore")
+                start_time = time.time()
+                tokens = tokenizer.encode(chunk)
+                end_time = time.time()
+                token_bytes = np.array(tokens, dtype="uint16").tobytes()
+                outfile.write(token_bytes)
+                stats["num_input_bytes"] = stats.get("num_input_bytes", 0) + (end - start)
+                stats["num_output_bytes"] = stats.get("num_output_bytes", 0) + len(token_bytes)
+                stats["num_tokens"] = stats.get("num_tokens", 0) + len(tokens)
+                stats["encode_time"] = stats.get("encode_time", 0) + (end_time - start_time)
+
+
+                start = end
+    overall_end_time = time.time()
+    stats["total_time"] = overall_end_time - overall_start_time
+    stats["throughput_MB/s"] = (boundaries[-1]/(2**20))/stats["total_time"]
+    if stats.get("num_output_bytes"):
+        stats["compression_ratio_bytes/token"] = boundaries[-1]/stats.get("num_tokens")
+    return stats
+    
