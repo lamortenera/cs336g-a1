@@ -319,8 +319,23 @@ def run_transformer_block(
     Returns:
         Float[Tensor, "batch sequence_length d_model"] Tensor with the output of
         running the Transformer block on the input features while using RoPE.
+
     """
-    raise NotImplementedError
+    block = transformer.TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta,
+                                         device=in_features.device, dtype=in_features.dtype)
+    block.load_state_dict({
+        "mha_norm.gain": weights["ln1.weight"],
+        "mha.weights_q": weights["attn.q_proj.weight"],
+        "mha.weights_k": weights["attn.k_proj.weight"],
+        "mha.weights_v": weights["attn.v_proj.weight"],
+        "mha.weights_o": weights["attn.output_proj.weight"],
+        "ff_norm.gain": weights["ln2.weight"],
+        "ff.weights_pregate": weights["ffn.w1.weight"],
+        "ff.weights_postgate": weights["ffn.w3.weight"],
+        "ff.weights_postswiglu": weights["ffn.w2.weight"]
+        })
+    
+    return block.forward(in_features)
 
 
 def run_transformer_lm(
@@ -402,7 +417,34 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    raise NotImplementedError
+    transformer_lm = transformer.TransformerLM(vocab_size, num_layers, d_model, num_heads,
+                                               d_ff, context_length, rope_theta, 
+                                               device=in_indices.device)
+
+    state_dict = {"embedding.embeddings": weights["token_embeddings.weight"]}
+    param_conversion = {
+        "mha_norm.gain": "ln1.weight",
+        "mha.weights_q": "attn.q_proj.weight",
+        "mha.weights_k": "attn.k_proj.weight",
+        "mha.weights_v": "attn.v_proj.weight",
+        "mha.weights_o": "attn.output_proj.weight",
+        "ff_norm.gain": "ln2.weight",
+        "ff.weights_pregate": "ffn.w1.weight",
+        "ff.weights_postgate": "ffn.w3.weight",
+        "ff.weights_postswiglu": "ffn.w2.weight"
+    }
+
+    for i in range(num_layers):
+        prefix = f"layers.{i}."
+        for k, v in param_conversion.items():
+            state_dict[prefix + k] = weights[prefix + v]
+
+    state_dict["final_norm.gain"] = weights["ln_final.weight"]
+    state_dict["output_proj.weights"] = weights["lm_head.weight"]
+
+    transformer_lm.load_state_dict(state_dict)
+
+    return transformer_lm.forward(in_indices)
 
 
 def run_rmsnorm(

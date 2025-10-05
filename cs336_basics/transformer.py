@@ -155,9 +155,48 @@ class MultiHeadSelfAttention(torch.nn.Module):
         O = rearrange(O, "... num_heads seq_len d_k -> ... seq_len (num_heads d_k)")
         return einsum(O, self.weights_o, "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
 
-        
-         
 
+class TransformerBlock(torch.nn.Module):
+    def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int, theta: float,
+                 device=None, dtype=None):
+        super().__init__()
+        self.mha_norm = RMSNorm(d_model, device=device, dtype=dtype)
+        self.mha = MultiHeadSelfAttention(d_model, num_heads, max_seq_len, theta, device=device, dtype=dtype)
+        self.ff_norm = RMSNorm(d_model, device=device, dtype=dtype)
+        self.ff = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
+
+    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"]):
+        x_norm = self.mha_norm.forward(x)
+        x_mha = self.mha.forward(x_norm, torch.arange(x.shape[-2]))
+        x2 = x + x_mha
+
+        x2_norm = self.ff_norm.forward(x2)
+        x2_ff = self.ff.forward(x2_norm)
+        return x2 + x2_ff
+
+         
+class TransformerLM(torch.nn.Module):
+    def __init__(self, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
+                 d_ff: int, max_seq_len: int, theta: float, device=None, dtype=None):
+        super().__init__()
+        self.embedding = Embedding(vocab_size, d_model, device=device, dtype=dtype)
+        self.layers = torch.nn.ModuleList([])
+        for _ in range(num_layers):
+            self.layers.append(
+                    TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, device=device, dtype=dtype))
+        self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
+        self.output_proj = Linear(d_model, vocab_size)
+
+    def forward(self, indices: Int[torch.Tensor, "... seq_len"]) -> Float[torch.Tensor, "... seq_len vocab_size"]:
+        x = self.embedding.forward(indices)
+        for layer in self.layers:
+            x = layer.forward(x)
+        x = self.final_norm.forward(x)
+        x = self.output_proj.forward(x)
+        return x
+
+         
+        
 
         
 
