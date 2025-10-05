@@ -119,7 +119,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.weights_k = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_v = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_o = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
-        mask = torch.ones(max_seq_len, max_seq_len).tril() > 0)
+        mask = torch.ones(max_seq_len, max_seq_len).tril() > 0
         self.register_buffer("mask", mask, persistent=False)
         self.num_heads = num_heads
 
