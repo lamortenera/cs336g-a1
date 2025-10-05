@@ -1,0 +1,150 @@
+import torch
+import numpy as np
+from jaxtyping import Float, Int, Bool
+from einops import rearrange, einsum
+
+def get_weights(shape, init_std, device, dtype):
+    w = torch.empty(shape, device=device, dtype=dtype)
+    w = torch.nn.init.trunc_normal_(w, std=init_std, a=-3*init_std, b=3*init_std) 
+    return torch.nn.Parameter(w)
+
+class Linear(torch.nn.Module):
+    def __init__(self, d_in, d_out, device=None, dtype=None):
+        super().__init__()
+        w = torch.empty(d_out, d_in, device=device, dtype=dtype)
+        std = np.sqrt(2 / (d_in + d_out))
+        w = torch.nn.init.trunc_normal_(w, std=std, a=-3*std, b=3*std)
+        self.weights = torch.nn.Parameter(w)
+
+    def forward(self, x: Float[torch.Tensor, "... d_in"]) -> torch.Tensor:
+        return torch.einsum("...i,ji->...j", x, self.weights) 
+
+class Embedding(torch.nn.Module):
+    def __init__(self, vocab_size, embedding_dim, device=None, dtype=None):
+        super().__init__()
+        e = torch.empty(vocab_size, embedding_dim, device=device, dtype=dtype)
+        e = torch.nn.init.trunc_normal_(e, std=1, a=-3, b=3)
+        self.embeddings = torch.nn.Parameter(e)
+
+    def forward(self, x: Int[torch.Tensor, "..."]) -> torch.Tensor:
+        orig_shape = list(x.size())
+        x_flat = x.flatten()
+        result = self.embeddings[x_flat]
+        embedding_dim = self.embeddings.shape[-1]
+        return result.reshape(orig_shape + [embedding_dim])
+
+class RMSNorm(torch.nn.Module):
+    def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
+        super().__init__()
+        gain = torch.empty(d_model, device=device, dtype=dtype)
+        std = np.sqrt(2/d_model)
+        gain = torch.nn.init.trunc_normal_(gain, std=std, a=-3*std, b=3*std)
+        self.gain = torch.nn.Parameter(gain)
+        self.eps = eps
+
+    def forward(self, x: Float[torch.Tensor, "... d_model"]) -> torch.Tensor:
+        orig_dtype = x.dtype
+        x = x.to(torch.float32)
+        x_inv_std = 1/torch.sqrt(torch.mean((x * x), axis=-1) + self.eps)
+        x_norm = torch.einsum("...i,...,i -> ...i", x, x_inv_std, self.gain)
+        return x_norm.to(orig_dtype)
+
+class SwiGLU(torch.nn.Module):
+    def __init__(self, d_model: int, d_ff: int, device=None, dtype=None):
+        super().__init__()
+        def get_weights(d1, d2):
+            w = torch.empty(d1, d2, device=device, dtype=dtype)
+            std = np.sqrt(2 / (d1 + d2))
+            w = torch.nn.init.trunc_normal_(w, std=std, a=-3*std, b=3*std)
+            return torch.nn.Parameter(w)
+
+        self.weights_pregate = get_weights(d_ff, d_model)
+        self.weights_postgate = get_weights(d_ff, d_model)
+        self.weights_postswiglu = get_weights(d_model, d_ff)
+
+    def forward(self, x: Float[torch.Tensor, "... d_model"]) -> torch.Tensor:
+        x_pregate = torch.einsum("...i,ji->...j", x, self.weights_pregate)
+        silu = x_pregate * torch.sigmoid(x_pregate)
+        x_postgate = torch.einsum("...i,ji->...j", x, self.weights_postgate)
+        swiglu = silu * x_postgate
+        return torch.einsum("...i,ji -> ...j", swiglu, self.weights_postswiglu)
+
+class RotaryPositionalEmbedding(torch.nn.Module):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+        super().__init__()
+        assert d_k % 2 == 0
+        ks = (2*torch.arange(d_k // 2, device=device))/d_k
+        denom = 1/(theta ** ks)
+        num = torch.arange(max_seq_len, device=device)
+        angles = torch.einsum("i,j->ij", num, denom)
+        rotation = torch.exp(angles*1j)
+        self.register_buffer("rotation", rotation, persistent=False)
+
+    def forward(self, 
+                x: Float[torch.Tensor, "... seq_len d_k"], 
+                token_positions: Float[torch.Tensor, "... seq_len"]) -> torch.Tensor:
+        x = rearrange(x, "... (half_d_k two) -> ... half_d_k two", two=2)
+        x = torch.view_as_complex(x)
+        rotation = self.rotation[token_positions.flatten()].reshape(list(token_positions.shape) + [self.rotation.shape[-1]])
+        rotated_x = torch.view_as_real(x*rotation)
+        return rearrange(rotated_x, "... half_d_k two -> ... (half_d_k two)")
+
+def softmax(tensor: torch.Tensor, dim_index: int) -> torch.Tensor:
+    norm_exp = torch.exp(tensor - torch.max(tensor, axis=dim_index, keepdims=True).values)
+    return norm_exp / torch.sum(norm_exp, axis=dim_index, keepdims=True)
+
+def scaled_dot_product_attention(
+        queries: Float[torch.Tensor, "... num_q d_k"],
+        keys: Float[torch.Tensor, "... num_k d_k"],
+        values: Float[torch.Tensor, "... num_k d_v"],
+        mask: Bool[torch.Tensor, "num_q num_k"] | None = None) -> Float[torch.Tensor, "... num_q d_v"]:
+    similarities = einsum(
+            queries, keys, "... num_q d_k, ... num_k d_k -> ... num_q num_k")
+    similarities /= np.sqrt(queries.shape[-1])
+    if mask is not None:
+        similarities = torch.where(mask, similarities, -torch.inf)
+    return einsum(softmax(similarities, -1), values, "... num_q num_k, ... num_k d_v -> ... num_q d_v")
+
+
+class MultiHeadSelfAttention(torch.nn.Module):
+    def __init__(self, d_model: int, num_heads: int, 
+                 max_seq_len: int, theta: float, device=None, dtype=None):
+        super().__init__()
+        self.rope = RotaryPositionalEmbedding(
+                theta, d_model, max_seq_len, device=device)
+        assert d_model % num_heads == 0
+        d_k = d_model // num_heads
+
+        self.weights_q = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        self.weights_k = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        self.weights_v = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        self.weights_o = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        mask = torch.ones(max_seq_len, max_seq_len).tril() > 0)
+        self.register_buffer("mask", mask, persistent=False)
+        self.num_heads = num_heads
+
+
+    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"]):
+        Q = einsum(x, self.weights_q, 
+        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+        K = einsum(x, self.weights_k, 
+        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+        V = einsum(x, self.weights_v, 
+        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+
+        Q = rearrange(Q, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
+        K = rearrange(K, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
+        V = rearrange(V, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
+        seq_len = x.shape[-2]
+        O = scaled_dot_product_attention(Q, K, V, self.mask[:seq_len,:seq_len])
+
+
+        O = rearrange(O, "... num_heads seq_len d_k -> ... seq_len (num_heads d_k)")
+        return einsum(O, self.weights_o, "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+
+        
+         
+
+
+        
+
