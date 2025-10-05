@@ -108,23 +108,31 @@ def scaled_dot_product_attention(
 
 class MultiHeadSelfAttention(torch.nn.Module):
     def __init__(self, d_model: int, num_heads: int, 
-                 max_seq_len: int, theta: float, device=None, dtype=None):
+                 max_seq_len: int, theta: float | None, device=None, dtype=None):
         super().__init__()
-        self.rope = RotaryPositionalEmbedding(
-                theta, d_model, max_seq_len, device=device)
+        
         assert d_model % num_heads == 0
         d_k = d_model // num_heads
+
+        if theta is not None:
+            self.rope = RotaryPositionalEmbedding(
+                    theta, d_k, max_seq_len, device=device)
+        else:
+            self.rope = None
 
         self.weights_q = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_k = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_v = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_o = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        
         mask = torch.ones(max_seq_len, max_seq_len).tril() > 0
         self.register_buffer("mask", mask, persistent=False)
+
         self.num_heads = num_heads
 
 
-    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"]):
+    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"], 
+                token_positions: Float[torch.Tensor, "... seq_len"]):
         Q = einsum(x, self.weights_q, 
         "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
         K = einsum(x, self.weights_k, 
@@ -135,6 +143,11 @@ class MultiHeadSelfAttention(torch.nn.Module):
         Q = rearrange(Q, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
         K = rearrange(K, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
         V = rearrange(V, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
+
+        if self.rope is not None:
+            Q = self.rope.forward(Q, token_positions)
+            K = self.rope.forward(K, token_positions)
+
         seq_len = x.shape[-2]
         O = scaled_dot_product_attention(Q, K, V, self.mask[:seq_len,:seq_len])
 

@@ -158,14 +158,14 @@ def run_multihead_self_attention(
     # q_proj_weight shape:  torch.Size([64, 64])
     # in_features shape:  torch.Size([4, 12, 64])
     multihead_self_attention = transformer.MultiHeadSelfAttention(
-            d_model, num_heads, in_features.shape[-2], 10000, device=in_features.device, dtype=in_features.dtype)
+            d_model, num_heads, in_features.shape[-2], None, device=in_features.device, dtype=in_features.dtype)
     multihead_self_attention.load_state_dict({
         "weights_q": q_proj_weight,
         "weights_k": k_proj_weight,
         "weights_v": v_proj_weight,
         "weights_o": o_proj_weight
         })
-    return multihead_self_attention.forward(in_features)
+    return multihead_self_attention.forward(in_features, None)
     #t2 = torch.nn.MultiheadAttention(d_model, num_heads, bias=False, batch_first=True, 
     #                                 device=in_features.device, dtype=in_features.dtype)
     #t2.load_state_dict({
@@ -216,7 +216,15 @@ def run_multihead_self_attention_with_rope(
         Float[Tensor, " ... sequence_length d_out"]: Tensor with the output of running your optimized, batched multi-headed attention
         implementation with the given QKV projection weights and input features.
     """
-    raise NotImplementedError
+    multihead_self_attention = transformer.MultiHeadSelfAttention(
+            d_model, num_heads, max_seq_len, theta, device=in_features.device, dtype=in_features.dtype)
+    multihead_self_attention.load_state_dict({
+        "weights_q": q_proj_weight,
+        "weights_k": k_proj_weight,
+        "weights_v": v_proj_weight,
+        "weights_o": o_proj_weight
+        })
+    return multihead_self_attention.forward(in_features, token_positions)
 
 
 def run_rope(
