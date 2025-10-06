@@ -9,7 +9,7 @@ import numpy.typing as npt
 import torch
 import einops
 from torch import Tensor
-from cs336_basics import tokenization, transformer
+from cs336_basics import tokenization, transformer, lm_training
 
 def run_linear(
     d_in: int,
@@ -483,8 +483,7 @@ def run_silu(in_features: Float[Tensor, " ..."]) -> Float[Tensor, " ..."]:
         Float[Tensor,"..."]: of with the same shape as `in_features` with the output of applying
         SiLU to each element.
     """
-    raise NotImplementedError
-
+    return in_features * torch.sigmoid(in_features)
 
 def run_get_batch(
     dataset: npt.NDArray, batch_size: int, context_length: int, device: str
@@ -540,7 +539,9 @@ def run_cross_entropy(
     Returns:
         Float[Tensor, ""]: The average cross-entropy loss across examples.
     """
-    raise NotImplementedError
+    print("inputs shape: ", inputs.shape)
+    print("targets shape: ", targets.shape)
+    return lm_training.cross_entropy(inputs, targets) 
 
 
 def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm: float) -> None:
@@ -552,14 +553,13 @@ def run_gradient_clipping(parameters: Iterable[torch.nn.Parameter], max_l2_norm:
 
     The gradients of the parameters (parameter.grad) should be modified in-place.
     """
-    raise NotImplementedError
-
+    return lm_training.gradient_clipping(parameters, max_l2_norm)
 
 def get_adamw_cls() -> Any:
     """
     Returns a torch.optim.Optimizer that implements AdamW.
     """
-    raise NotImplementedError
+    return lm_training.AdamW
 
 
 def run_get_lr_cosine_schedule(
@@ -586,9 +586,11 @@ def run_get_lr_cosine_schedule(
 
     Returns:
         Learning rate at the given iteration under the specified schedule.
+def learning_rate_schedule(it: int, alpha_min: float, alpha_max: float, 
+                           t_warmup: int, t_cosine: int) -> float:
     """
-    raise NotImplementedError
-
+    return lm_training.learning_rate_schedule(it, min_learning_rate, max_learning_rate, 
+                                              warmup_iters, cosine_cycle_iters)
 
 def run_save_checkpoint(
     model: torch.nn.Module,
