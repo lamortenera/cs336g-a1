@@ -139,6 +139,8 @@ def gradient_clipping(params: Iterable[torch.nn.Parameter], max_l2_norm: float):
                 continue
             param.grad *= scale_factor
 
+    return l2_norm
+
 
 def get_batch(arr: npt.NDArray, generator: np.random.Generator, batch_size: int, context_length: int, device=None):
     starts = generator.integers(0, high=len(arr) - context_length, size=batch_size)

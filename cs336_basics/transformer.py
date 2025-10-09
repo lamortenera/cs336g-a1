@@ -71,13 +71,14 @@ class SwiGLU(torch.nn.Module):
         return torch.einsum("...i,ji -> ...j", swiglu, self.weights_postswiglu)
 
 class RotaryPositionalEmbedding(torch.nn.Module):
-    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None):
+    def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None, dtype=None):
         super().__init__()
         assert d_k % 2 == 0
-        ks = (2*torch.arange(d_k // 2, device=device))/d_k
+        ks = (2*torch.arange(d_k // 2, device=device, dtype=dtype))/d_k
         denom = 1/(theta ** ks)
         num = torch.arange(max_seq_len, device=device)
         angles = torch.einsum("i,j->ij", num, denom)
+        self.dtype = angles.dtype
         rotation = torch.exp(angles*1j)
         self.register_buffer("rotation", rotation, persistent=False)
 
@@ -117,7 +118,7 @@ class MultiHeadSelfAttention(torch.nn.Module):
 
         if theta is not None:
             self.rope = RotaryPositionalEmbedding(
-                    theta, d_k, max_seq_len, device=device)
+                    theta, d_k, max_seq_len, device=device, dtype=dtype)
         else:
             self.rope = None
 
@@ -129,11 +130,14 @@ class MultiHeadSelfAttention(torch.nn.Module):
         mask = torch.ones(max_seq_len, max_seq_len).tril() > 0
         self.register_buffer("mask", mask, persistent=False)
 
+        self.dtype= self.rope.dtype
         self.num_heads = num_heads
 
 
     def forward(self, x: Float[torch.Tensor, "... seq_len d_model"], 
                 token_positions: Float[torch.Tensor, "... seq_len"]):
+        orig_dtype = x.dtype
+        x = x.to(self.dtype)
         Q = einsum(x, self.weights_q, 
         "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
         K = einsum(x, self.weights_k, 
@@ -154,15 +158,16 @@ class MultiHeadSelfAttention(torch.nn.Module):
 
 
         O = rearrange(O, "... num_heads seq_len d_k -> ... seq_len (num_heads d_k)")
-        return einsum(O, self.weights_o, "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+        result = einsum(O, self.weights_o, "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
+        return result.to(orig_dtype)
 
 
 class TransformerBlock(torch.nn.Module):
     def __init__(self, d_model: int, num_heads: int, d_ff: int, max_seq_len: int, theta: float,
-                 device=None, dtype=None):
+                 device=None, dtype=None, attention_dtype=None):
         super().__init__()
         self.mha_norm = RMSNorm(d_model, device=device, dtype=dtype)
-        self.mha = MultiHeadSelfAttention(d_model, num_heads, max_seq_len, theta, device=device, dtype=dtype)
+        self.mha = MultiHeadSelfAttention(d_model, num_heads, max_seq_len, theta, device=device, dtype=attention_dtype)
         self.ff_norm = RMSNorm(d_model, device=device, dtype=dtype)
         self.ff = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
 
@@ -178,15 +183,15 @@ class TransformerBlock(torch.nn.Module):
          
 class TransformerLM(torch.nn.Module):
     def __init__(self, *, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
-                 d_ff: int, max_seq_len: int, theta: Optional[float], device=None, dtype=None):
+                 d_ff: int, max_seq_len: int, theta: Optional[float], device=None, dtype=None, attention_dtype=None):
         super().__init__()
         self.embedding = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         self.layers = torch.nn.ModuleList([])
         for _ in range(num_layers):
             self.layers.append(
-                    TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, device=device, dtype=dtype))
+                    TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, device=device, dtype=dtype, attention_dtype=attention_dtype))
         self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
-        self.output_proj = Linear(d_model, vocab_size)
+        self.output_proj = Linear(d_model, vocab_size, device=device, dtype=dtype)
 
     def forward(self, indices: Int[torch.Tensor, "... seq_len"]) -> Float[torch.Tensor, "... seq_len vocab_size"]:
         x = self.embedding.forward(indices)

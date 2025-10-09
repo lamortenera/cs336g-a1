@@ -84,9 +84,15 @@ def resource_estimate(args):
 def model_params(model):
     num_params = 0
     num_bytes = 0
-    for param in model.parameters():
+    for name, param in model.named_parameters():
+        print(name, param.dtype, param.shape, sep=": ")
         num_params += param.nelement()
         num_bytes += param.element_size()*param.nelement()
+    for name, param in model.named_buffers():
+        print(name, param.dtype, param.shape, sep=": ")
+        num_params += param.nelement()
+        num_bytes += param.element_size()*param.nelement()
+
     print(f"Actual model params: {num_params}, bytes: {num_bytes}")
 
 def debug_memory():
@@ -126,16 +132,26 @@ def debug_memory():
         for e in ex:
             print("- " + str(e)[:100])
 
+def get_dtype(s: str) -> torch.dtype:
+    dtype = getattr(torch, s)
+    assert isinstance(dtype, torch.dtype)
+    assert dtype.is_floating_point
+    return dtype
+
+
 def train(args, run_name, logger):
+    dtype = get_dtype(args.dtype)
+    device = args.device
+
     train_tokens = lm_training.TokenLoader(input_path=args.train_path, batch_size=args.batch_size, 
-                                           context_length=args.context_length) 
+                                           context_length=args.context_length, device=device) 
     eval_tokens = lm_training.TokenLoader(input_path=args.eval_path, batch_size=args.batch_size,
-                                          context_length=args.context_length)
+                                          context_length=args.context_length, device=device)
     print("Created token loaders")
     model = transformer.TransformerLM(vocab_size=args.vocab_size, num_layers=args.num_layers,
                                       d_model=args.d_model, num_heads=args.num_heads, 
                                       d_ff=args.d_ff, max_seq_len=args.context_length,
-                                      theta=args.rope_theta)
+                                      theta=args.rope_theta, dtype=dtype).to(args.device)
     print("Created model")
 
     model_params(model)
@@ -154,9 +170,16 @@ def train(args, run_name, logger):
         #if step % 20 == 0:
         #    debug_memory()
         loss.backward()
+        gradient_l2_norm = None
+        if args.gradient_clipping_l2norm:
+            gradient_l2_norm = lm_training.gradient_clipping(model.parameters(), args.gradient_clipping_l2norm)
         optimizer.step()
         
-        logger.log({"step": step, "training_loss": loss.item(), "elapsed_s": time.time() - start_time})
+        stats = {"step": step, "training_loss": loss.item(), "elapsed_s": time.time() - start_time}
+        if gradient_l2_norm is not None:
+            stats["gradient_l2_norm"] = gradient_l2_norm
+
+        logger.log(stats)
 
         if step % args.eval_interval == 0:
             print("Evaluation phase")
@@ -215,6 +238,9 @@ if __name__ == "__main__":
     parser.add_argument("--beta1", help="Beta1 param in AdamW", type=float, default=0.9)
     parser.add_argument("--beta2", help="Beta2 param in AdamW", type=float, default=0.999)
     parser.add_argument("--weight_decay", help="Weight decay parameter in AdamW", type=float, default=0.01)
+    parser.add_argument("--device", help="The device to use", default="cpu")
+    parser.add_argument("--dtype", help="The dtype to use", default="float32")
+    parser.add_argument("--gradient_clipping_l2norm", help="L2 norm for gradient clipping, if not provided, no clipping", type=float)
     args = parser.parse_args()
     assert args.run_id_prefix.isidentifier()
     
