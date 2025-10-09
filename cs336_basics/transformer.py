@@ -1,12 +1,13 @@
 import torch
+from typing import Optional
 import numpy as np
 from jaxtyping import Float, Int, Bool
 from einops import rearrange, einsum
 
 def get_weights(shape, init_std, device, dtype):
-    w = torch.empty(shape, device=device, dtype=dtype)
-    w = torch.nn.init.trunc_normal_(w, std=init_std, a=-3*init_std, b=3*init_std) 
-    return torch.nn.Parameter(w)
+    return torch.nn.Parameter(
+            torch.nn.init.trunc_normal_(
+                torch.empty(shape, device=device, dtype=dtype), std=init_std, a=-3*init_std, b=3*init_std)) 
 
 class Linear(torch.nn.Module):
     def __init__(self, d_in, d_out, device=None, dtype=None):
@@ -108,7 +109,7 @@ def scaled_dot_product_attention(
 
 class MultiHeadSelfAttention(torch.nn.Module):
     def __init__(self, d_model: int, num_heads: int, 
-                 max_seq_len: int, theta: float | None, device=None, dtype=None):
+                 max_seq_len: int, theta: Optional[float], device=None, dtype=None):
         super().__init__()
         
         assert d_model % num_heads == 0
@@ -176,8 +177,8 @@ class TransformerBlock(torch.nn.Module):
 
          
 class TransformerLM(torch.nn.Module):
-    def __init__(self, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
-                 d_ff: int, max_seq_len: int, theta: float, device=None, dtype=None):
+    def __init__(self, *, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
+                 d_ff: int, max_seq_len: int, theta: Optional[float], device=None, dtype=None):
         super().__init__()
         self.embedding = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         self.layers = torch.nn.ModuleList([])

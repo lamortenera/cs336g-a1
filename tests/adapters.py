@@ -10,6 +10,7 @@ import torch
 import einops
 from torch import Tensor
 from cs336_basics import tokenization, transformer, lm_training
+import numpy as np
 
 def run_linear(
     d_in: int,
@@ -417,8 +418,9 @@ def run_transformer_lm(
         Float[Tensor, "batch_size sequence_length vocab_size"]: Tensor with the predicted unnormalized
         next-word distribution for each token.
     """
-    transformer_lm = transformer.TransformerLM(vocab_size, num_layers, d_model, num_heads,
-                                               d_ff, context_length, rope_theta, 
+    transformer_lm = transformer.TransformerLM(vocab_size=vocab_size, num_layers=num_layers, 
+                                               d_model=d_model, num_heads=num_heads,
+                                               d_ff=d_ff, context_length=context_length, theta=rope_theta, 
                                                device=in_indices.device)
 
     state_dict = {"embedding.embeddings": weights["token_embeddings.weight"]}
@@ -505,7 +507,8 @@ def run_get_batch(
         is the sampled input sequences, and the second tuple item is the corresponding
         language modeling labels.
     """
-    raise NotImplementedError
+    generator = np.random.default_rng()
+    return lm_training.get_batch(dataset, generator, batch_size, context_length, device)
 
 
 def run_softmax(in_features: Float[Tensor, " ..."], dim: int) -> Float[Tensor, " ..."]:
@@ -586,11 +589,12 @@ def run_get_lr_cosine_schedule(
 
     Returns:
         Learning rate at the given iteration under the specified schedule.
-def learning_rate_schedule(it: int, alpha_min: float, alpha_max: float, 
-                           t_warmup: int, t_cosine: int) -> float:
     """
-    return lm_training.learning_rate_schedule(it, min_learning_rate, max_learning_rate, 
-                                              warmup_iters, cosine_cycle_iters)
+    spec = f"0,0|lin|{warmup_iters},{max_learning_rate}|cos|{cosine_cycle_iters},{min_learning_rate}"
+    scheduler = lm_training.LRScheduler(spec)
+    return scheduler.lr(it)
+#    return lm_training.learning_rate_schedule(it, min_learning_rate, max_learning_rate, 
+#                                              warmup_iters, cosine_cycle_iters)
 
 def run_save_checkpoint(
     model: torch.nn.Module,
@@ -608,7 +612,7 @@ def run_save_checkpoint(
             we've completed.
         out (str | os.PathLike | BinaryIO | IO[bytes]): Path or file-like object to serialize the model, optimizer, and iteration to.
     """
-    raise NotImplementedError
+    lm_training.save_checkpoint(model, optimizer, iteration, out)
 
 
 def run_load_checkpoint(
@@ -629,8 +633,7 @@ def run_load_checkpoint(
     Returns:
         int: the previously-serialized number of iterations.
     """
-    raise NotImplementedError
-
+    return lm_training.load_checkpoint(src, model, optimizer)
 
 def get_tokenizer(
     vocab: dict[int, bytes],

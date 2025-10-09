@@ -164,5 +164,7 @@ cython_debug/
 *.tar.gz
 data/
 results/
+checkpoints/
+wandb/
 
 .vs/
