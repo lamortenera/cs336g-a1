@@ -34,8 +34,8 @@ class AdamW(torch.optim.Optimizer):
         for group in self.param_groups:
             for p in group["params"]:
                 state = self.state[p]
-                state["m"] = torch.zeros(p.data.shape)
-                state["v"] = torch.zeros(p.data.shape)
+                state["m"] = torch.zeros(p.data.shape, dtype=p.dtype, device=p.device)
+                state["v"] = torch.zeros(p.data.shape, dtype=p.dtype, device=p.device)
 
     def step(self, closure: Optional[Callable] = None):
         loss = None if closure is None else closure()
