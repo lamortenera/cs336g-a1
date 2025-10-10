@@ -3,6 +3,7 @@ from typing import Optional
 import numpy as np
 from jaxtyping import Float, Int, Bool
 from einops import rearrange, einsum
+import math
 
 def get_weights(shape, init_std, device, dtype):
     return torch.nn.Parameter(
@@ -38,8 +39,7 @@ class RMSNorm(torch.nn.Module):
     def __init__(self, d_model: int, eps: float = 1e-5, device=None, dtype=None):
         super().__init__()
         gain = torch.empty(d_model, device=device, dtype=dtype)
-        std = np.sqrt(2/d_model)
-        gain = torch.nn.init.trunc_normal_(gain, std=std, a=-3*std, b=3*std)
+        gain = torch.nn.init.ones_(gain)
         self.gain = torch.nn.Parameter(gain)
         self.eps = eps
 
@@ -65,11 +65,12 @@ class SwiGLU(torch.nn.Module):
 
     def forward(self, x: Float[torch.Tensor, "... d_model"]) -> torch.Tensor:
         x_pregate = torch.einsum("...i,ji->...j", x, self.weights_pregate)
-        silu = x_pregate * torch.sigmoid(x_pregate)
+        #silu = x_pregate * torch.sigmoid(x_pregate)
+        silu = torch.nn.functional.silu(x_pregate)
         x_postgate = torch.einsum("...i,ji->...j", x, self.weights_postgate)
         swiglu = silu * x_postgate
         return torch.einsum("...i,ji -> ...j", swiglu, self.weights_postswiglu)
-
+    
 class RotaryPositionalEmbedding(torch.nn.Module):
     def __init__(self, theta: float, d_k: int, max_seq_len: int, device=None, dtype=None):
         super().__init__()
@@ -84,10 +85,13 @@ class RotaryPositionalEmbedding(torch.nn.Module):
 
     def forward(self, 
                 x: Float[torch.Tensor, "... seq_len d_k"], 
-                token_positions: Float[torch.Tensor, "... seq_len"]) -> torch.Tensor:
+                token_positions: Int[torch.Tensor, "... seq_len"]|int) -> torch.Tensor:
         x = rearrange(x, "... (half_d_k two) -> ... half_d_k two", two=2)
         x = torch.view_as_complex(x)
-        rotation = self.rotation[token_positions.flatten()].reshape(list(token_positions.shape) + [self.rotation.shape[-1]])
+        if type(token_positions) == int:
+            rotation = self.rotation[..., :token_positions, :]
+        else:
+            rotation = self.rotation[token_positions.flatten()].reshape(list(token_positions.shape) + [self.rotation.shape[-1]])
         rotated_x = torch.view_as_real(x*rotation)
         return rearrange(rotated_x, "... half_d_k two -> ... (half_d_k two)")
 
@@ -102,10 +106,10 @@ def scaled_dot_product_attention(
         mask: Bool[torch.Tensor, "num_q num_k"] | None = None) -> Float[torch.Tensor, "... num_q d_v"]:
     similarities = einsum(
             queries, keys, "... num_q d_k, ... num_k d_k -> ... num_q num_k")
-    similarities /= np.sqrt(queries.shape[-1])
+    similarities /= math.sqrt(queries.shape[-1])
     if mask is not None:
         similarities = torch.where(mask, similarities, -torch.inf)
-    return einsum(softmax(similarities, -1), values, "... num_q num_k, ... num_k d_v -> ... num_q d_v")
+    return einsum(torch.softmax(similarities, -1), values, "... num_q num_k, ... num_k d_v -> ... num_q d_v")
 
 
 class MultiHeadSelfAttention(torch.nn.Module):
@@ -122,38 +126,35 @@ class MultiHeadSelfAttention(torch.nn.Module):
         else:
             self.rope = None
 
-        self.weights_q = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
-        self.weights_k = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
-        self.weights_v = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
+        self.weights_qkv = get_weights((3*d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_o = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         
         mask = torch.ones(max_seq_len, max_seq_len).tril() > 0
         self.register_buffer("mask", mask, persistent=False)
 
-        self.dtype= self.rope.dtype
+        self.dtype= self.weights_qkv.dtype
         self.num_heads = num_heads
 
 
     def forward(self, x: Float[torch.Tensor, "... seq_len d_model"], 
-                token_positions: Float[torch.Tensor, "... seq_len"]):
+                token_positions: Optional[Float[torch.Tensor, "... seq_len"]]=None):
         orig_dtype = x.dtype
         x = x.to(self.dtype)
-        Q = einsum(x, self.weights_q, 
-        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
-        K = einsum(x, self.weights_k, 
-        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
-        V = einsum(x, self.weights_v, 
-        "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
-
-        Q = rearrange(Q, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
-        K = rearrange(K, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
-        V = rearrange(V, "... seq_len (num_heads d_k)-> ... num_heads seq_len d_k", num_heads=self.num_heads)
-
-        if self.rope is not None:
-            Q = self.rope.forward(Q, token_positions)
-            K = self.rope.forward(K, token_positions)
-
+        QKV = einsum(x, self.weights_qkv, 
+        "... seq_len d_model_in, d_model_out_3x d_model_in -> ... seq_len d_model_out_3x")
+        QKV = rearrange(QKV, "... seq_len (three num_heads d_k)-> three ... num_heads seq_len d_k", 
+                        num_heads=self.num_heads, three=3)
+        
         seq_len = x.shape[-2]
+        Q, K, V = QKV[0], QKV[1], QKV[2]
+        if self.rope is not None:
+            if token_positions is not None:
+                Q = self.rope.forward(Q, token_positions)
+                K = self.rope.forward(K, token_positions)
+            else:
+                Q = self.rope.forward(Q, seq_len)
+                K = self.rope.forward(K, seq_len)
+
         O = scaled_dot_product_attention(Q, K, V, self.mask[:seq_len,:seq_len])
 
 
@@ -173,14 +174,13 @@ class TransformerBlock(torch.nn.Module):
 
     def forward(self, x: Float[torch.Tensor, "... seq_len d_model"]):
         x_norm = self.mha_norm.forward(x)
-        x_mha = self.mha.forward(x_norm, torch.arange(x.shape[-2]))
+        x_mha = self.mha.forward(x_norm)
         x2 = x + x_mha
 
         x2_norm = self.ff_norm.forward(x2)
         x2_ff = self.ff.forward(x2_norm)
         return x2 + x2_ff
 
-         
 class TransformerLM(torch.nn.Module):
     def __init__(self, *, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
                  d_ff: int, max_seq_len: int, theta: Optional[float], device=None, dtype=None, attention_dtype=None):

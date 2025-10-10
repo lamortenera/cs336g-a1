@@ -1,5 +1,6 @@
 from cs336_basics import tokenization, token_utils, lm_training, transformer
 from typing import Optional
+import os
 import logging
 import argparse
 import sys
@@ -12,7 +13,7 @@ import time
 import gc
 import psutil
 import random
-
+from torch.profiler import profile, ProfilerActivity, record_function
 
 class Logger(object):
     def __init__(self, output_file: Optional[str], run_name: str, run_desc: str, config: dict, use_wandb: bool = True):
@@ -148,10 +149,14 @@ def train(args, run_name, logger):
     eval_tokens = lm_training.TokenLoader(input_path=args.eval_path, batch_size=args.batch_size,
                                           context_length=args.context_length, device=device)
     print("Created token loaders")
+    theta = args.rope_theta if args.rope_theta > 0 else None
     model = transformer.TransformerLM(vocab_size=args.vocab_size, num_layers=args.num_layers,
                                       d_model=args.d_model, num_heads=args.num_heads, 
                                       d_ff=args.d_ff, max_seq_len=args.context_length,
-                                      theta=args.rope_theta, dtype=dtype).to(args.device)
+                                      theta=theta, dtype=dtype).to(args.device)
+    if os.name != "nt":
+        model = torch.compile(model)
+
     print("Created model")
 
     model_params(model)
@@ -161,14 +166,16 @@ def train(args, run_name, logger):
                                   betas=(args.beta1, args.beta2))
     print("Created optimizer") 
     start_time = time.time()
+    #with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+    #             record_shapes=True,
+    #             experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True)) as prof:
+    #    with record_function("train_loop"):
     for step in range(1, args.train_steps+1):
         model.train()
         inputs, labels = next(train_tokens)
         optimizer.zero_grad()
         outputs = model(inputs)
         loss = lm_training.cross_entropy(outputs, labels)
-        #if step % 20 == 0:
-        #    debug_memory()
         loss.backward()
         gradient_l2_norm = None
         if args.gradient_clipping_l2norm:
@@ -201,7 +208,8 @@ def train(args, run_name, logger):
         if step % args.checkpoint_interval == 0:
             out_path = args.checkpoint_dir + "/" + run_name + f"/checkpoint_{step}/data.pt"
             lm_training.save_checkpoint(model, optimizer, step, out_path)
-                
+    #print(prof.key_averages(group_by_stack_n=5).table(sort_by="cpu_time_total", row_limit=50))
+        
         
 
 

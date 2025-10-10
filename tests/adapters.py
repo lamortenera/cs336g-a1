@@ -89,13 +89,20 @@ def run_swiglu(
     # swiglu.w1.weight.data = w1_weight
     # swiglu.w2.weight.data = w2_weight
     # swiglu.w3.weight.data = w3_weight
-    swiglu = transformer.SwiGLU(
-            d_model, d_ff, dtype=w1_weight.dtype, device=w1_weight.device)
+    # swiglu = transformer.SwiGLU(
+    #         d_model, d_ff, dtype=w1_weight.dtype, device=w1_weight.device)
+    # swiglu.load_state_dict({
+    #     "weights_pregate": w1_weight,
+    #     "weights_postgate": w3_weight,
+    #     "weights_postswiglu": w2_weight
+    #     })
+    # return swiglu.forward(in_features)
+    swiglu = transformer.SwiGLU2(d_model, d_ff, dtype=w1_weight.dtype, device=w1_weight.device)
     swiglu.load_state_dict({
-        "weights_pregate": w1_weight,
-        "weights_postgate": w3_weight,
-        "weights_postswiglu": w2_weight
-        })
+        "w1.weight": w1_weight,
+        "w3.weight": w3_weight,
+        "w2.weight": w2_weight
+        })#     })
     return swiglu.forward(in_features)
 
 
@@ -159,25 +166,23 @@ def run_multihead_self_attention(
     # q_proj_weight shape:  torch.Size([64, 64])
     # in_features shape:  torch.Size([4, 12, 64])
     multihead_self_attention = transformer.MultiHeadSelfAttention(
-            d_model, num_heads, in_features.shape[-2], None, device=in_features.device, dtype=in_features.dtype)
+           d_model, num_heads, in_features.shape[-2], None, device=in_features.device, dtype=in_features.dtype)
     multihead_self_attention.load_state_dict({
-        "weights_q": q_proj_weight,
-        "weights_k": k_proj_weight,
-        "weights_v": v_proj_weight,
-        "weights_o": o_proj_weight
-        })
+       "weights_qkv": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
+       "weights_o": o_proj_weight
+       })
     return multihead_self_attention.forward(in_features, None)
-    #t2 = torch.nn.MultiheadAttention(d_model, num_heads, bias=False, batch_first=True, 
-    #                                 device=in_features.device, dtype=in_features.dtype)
-    #t2.load_state_dict({
-    #        "in_proj_weight": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
-    #        "out_proj.weight": o_proj_weight
-    #        })
-    #
-    #seq_len = in_features.shape[-2]
-    #mask = torch.ones(seq_len, seq_len).triu(diagonal=1) > 0
+    # t2 = torch.nn.MultiheadAttention(d_model, num_heads, bias=False, batch_first=True, 
+    #                                  device=in_features.device, dtype=in_features.dtype)
+    # t2.load_state_dict({
+    #         "in_proj_weight": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
+    #         "out_proj.weight": o_proj_weight
+    #         })
+    
+    # seq_len = in_features.shape[-2]
+    # mask = torch.ones(seq_len, seq_len).triu(diagonal=1) > 0
 
-    #return t2.forward(in_features, in_features, in_features, attn_mask=mask, need_weights=False)[0]
+    return t2.forward(in_features, in_features, in_features, attn_mask=mask, need_weights=False)[0]
 
 
 def run_multihead_self_attention_with_rope(
@@ -220,11 +225,9 @@ def run_multihead_self_attention_with_rope(
     multihead_self_attention = transformer.MultiHeadSelfAttention(
             d_model, num_heads, max_seq_len, theta, device=in_features.device, dtype=in_features.dtype)
     multihead_self_attention.load_state_dict({
-        "weights_q": q_proj_weight,
-        "weights_k": k_proj_weight,
-        "weights_v": v_proj_weight,
-        "weights_o": o_proj_weight
-        })
+       "weights_qkv": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
+       "weights_o": o_proj_weight
+       })
     return multihead_self_attention.forward(in_features, token_positions)
 
 
@@ -469,8 +472,11 @@ def run_rmsnorm(
         Float[Tensor,"... d_model"]: Tensor of with the same shape as `in_features` with the output of running
         RMSNorm of the `in_features`.
     """
-    rmsnorm = transformer.RMSNorm(d_model, eps, device=weights.device, dtype=weights.dtype)
-    rmsnorm.load_state_dict({"gain": weights})
+    #rmsnorm = transformer.RMSNorm(d_model, eps, device=weights.device, dtype=weights.dtype)
+    #rmsnorm.load_state_dict({"gain": weights})
+    #return rmsnorm.forward(in_features)
+    rmsnorm = torch.nn.RMSNorm(d_model, eps=eps, device=weights.device, dtype=weights.dtype)
+    rmsnorm.load_state_dict({"weight": weights})
     return rmsnorm.forward(in_features)
 
 
