@@ -63,8 +63,9 @@ class Logger(object):
 
     def log(self, data: dict):
         assert self.initialized, "The logger must be used as a context manager"
+        assert "step" in data.keys()
         if self.use_wandb:
-            self.run.log(data)
+            self.run.log(data, step=data["step"])
         if self.output_stream is not None:
             self.output_stream.write(json.dumps(data) + "\n")
         print(self._dict_to_string(data))
@@ -184,25 +185,32 @@ def train(args, run_name, logger):
     #             record_shapes=True,
     #             experimental_config=torch._C._profiler._ExperimentalConfig(verbose=True)) as prof:
     #    with record_function("train_loop"):
+    step_loss = 0
+    optimizer.zero_grad()
     for step in range(1, args.train_steps+1):
         model.train()
         inputs, labels = next(train_tokens)
-        optimizer.zero_grad()
         outputs = model(inputs)
         loss = lm_training.cross_entropy(outputs, labels)
         loss.backward()
+        step_loss += loss.item()
         gradient_l2_norm = None
-        if args.gradient_clipping_l2norm:
-            gradient_l2_norm = lm_training.gradient_clipping(
-                model.parameters(), args.gradient_clipping_l2norm)
-        optimizer.step()
+        if step % args.optimizer_step_interval == 0:
+            if args.gradient_clipping_l2norm:
+                gradient_l2_norm = lm_training.gradient_clipping(
+                    model.parameters(), args.gradient_clipping_l2norm)
+            optimizer.step()
+            optimizer.zero_grad()
 
-        stats = {"step": step, "training_loss": loss.item(),
-                 "elapsed_s": time.time() - start_time}
-        if gradient_l2_norm is not None:
-            stats["gradient_l2_norm"] = gradient_l2_norm
+            stats = {
+                "step": step,
+                "training_loss": (step_loss / args.optimizer_step_interval),
+                "elapsed_s": time.time() - start_time}
+            if gradient_l2_norm is not None:
+                stats["gradient_l2_norm"] = gradient_l2_norm
 
-        logger.log(stats)
+            logger.log(stats)
+            step_loss = 0
 
         if step % args.eval_interval == 0:
             print("Evaluation phase")
@@ -265,6 +273,10 @@ if __name__ == "__main__":
         "--eval_interval",
         help="Every eval_interval training steps, run the eval phase", type=int,
         default=100)
+    parser.add_argument(
+        "--optimizer_step_interval",
+        help="The gradients are accumulated for these many steps and applied all at once",
+        type=int, default=1)
     parser.add_argument("--checkpoint_interval",
                         help="How many steps for saving the checkpoint",
                         type=int, default=100)
