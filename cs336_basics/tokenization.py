@@ -10,6 +10,7 @@ from .utils import stopwatch
 from multiprocessing import Pool
 import numpy as np
 
+
 def special_tokens_regexp(special_tokens: list[str]):
     # Make sure that longer tokens appear first
     # So that if a token is the composition of other tokens
@@ -18,14 +19,20 @@ def special_tokens_regexp(special_tokens: list[str]):
     return re.compile("|".join(re.escape(s) for s in sorted_special_tokens))
 
 
-PAT = re.compile(r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
-def pretokenize(chunk: str, counts: defaultdict[str, int], special_tokens: list[str]):
+PAT = re.compile(
+    r"""'(?:[sdmt]|ll|ve|re)| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
+
+
+def pretokenize(
+        chunk: str, counts: defaultdict[str, int],
+        special_tokens: list[str]):
     split_regexp = special_tokens_regexp(special_tokens)
 
     for s in split_regexp.split(chunk):
         for part in PAT.finditer(s):
             counts[part.group(0)] += 1
     return counts
+
 
 def count_pair_frequencies(parts):
     pairs = defaultdict(int)
@@ -38,6 +45,7 @@ def count_pair_frequencies(parts):
 
     return pairs, pair_indices
 
+
 def get_best_pair(pairs):
     best_score = None
     best_pair = None
@@ -46,9 +54,11 @@ def get_best_pair(pairs):
         if best_score is None or score > best_score:
             best_score = score
             best_pair = pair
-    return best_pair 
+    return best_pair
 
-def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indices):
+
+def update_parts_and_pairs(
+        parts, pairs, pair_indices, best_pair, affected_indices):
     del pairs[best_pair]
     del pair_indices[best_pair]
     merged_best_pair = b"".join(best_pair)
@@ -58,8 +68,8 @@ def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indic
         for i in range(len(part)-1):
             key = (part[i], part[i+1])
             if key != best_pair:
-              count_deltas[key] -= c
-              pair_indices[key].discard(part_index)
+                count_deltas[key] -= c
+                pair_indices[key].discard(part_index)
 
         i = 0
         j = 0
@@ -80,7 +90,7 @@ def update_parts_and_pairs(parts, pairs, pair_indices, best_pair, affected_indic
 
         del part[j:]
 
-        for i in range(len(part) -1):
+        for i in range(len(part) - 1):
             count_deltas[(part[i], part[i+1])] += c
             pair_indices[(part[i], part[i+1])].add(part_index)
     affected_pairs = set()
@@ -108,14 +118,13 @@ class PairHeap:
             self._bubble_up(index)
         elif c < curr_count:
             self._bubble_down(index)
-    
+
     def add_pair(self, pair, c):
         assert pair not in self._pointers.keys()
         index = len(self._tree)
         self._pointers[pair] = index
         self._tree.append([c, pair])
         self._bubble_up(index)
-
 
     def top(self):
         if not self._tree:
@@ -130,7 +139,7 @@ class PairHeap:
         del self._tree[len(self._tree) - 1]
         del self._pointers[result[1]]
         self._bubble_down(0)
-        return result 
+        return result
 
     def _swap(self, i1, i2):
         p1 = self._tree[i1]
@@ -139,7 +148,6 @@ class PairHeap:
         self._tree[i1] = p2
         self._pointers[p1[1]] = i2
         self._pointers[p2[1]] = i1
-
 
     def _bubble_up(self, index):
         while index > 0:
@@ -161,16 +169,18 @@ class PairHeap:
             index = child_index
 
 
-def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, special_tokens: list[str]):
+def train_tokenizer_from_counters(
+        counters: dict[str, int],
+        num_merges: int, special_tokens: list[str]):
     vocab = {}
     for tok in special_tokens:
         vocab[len(vocab)] = tok.encode("utf8")
     for i in range(256):
         vocab[len(vocab)] = (i).to_bytes()
-    
 
     byte_pairs = []
-    parts = [([(b).to_bytes() for b in part.encode("utf8")], c) for part, c in counters.items()]
+    parts = [([(b).to_bytes() for b in part.encode("utf8")], c)
+             for part, c in counters.items()]
     pairs, pair_indices = count_pair_frequencies(parts)
     pair_heap = PairHeap(pairs)
 
@@ -184,14 +194,17 @@ def train_tokenizer_from_counters(counters: dict[str, int], num_merges: int, spe
         vocab[len(vocab)] = merged_best_pair
         byte_pairs.append(best_pair)
 
-        affected_pairs = update_parts_and_pairs(parts, pairs, pair_indices, best_pair, pair_indices[best_pair])
+        affected_pairs = update_parts_and_pairs(
+            parts, pairs, pair_indices, best_pair, pair_indices[best_pair])
         for pair in affected_pairs:
             pair_heap.set_count(pair, pairs[pair])
 
     return vocab, byte_pairs
 
 
-def pretokenize_file_single_worker(input_path: str, special_tokens: list[str], boundaries: list[int]):
+def pretokenize_file_single_worker(
+        input_path: str, special_tokens: list[str],
+        boundaries: list[int]):
     pretokenization_counts = defaultdict(int)
     if len(boundaries) < 2:
         return pretokenization_counts
@@ -211,8 +224,10 @@ def pretokenize_file_single_worker(input_path: str, special_tokens: list[str], b
 def pretokenize_file_single_worker_wrapper(args):
     return pretokenize_file_single_worker(**args)
 
+
 def ceiling_division(n, d):
     return -(n // -d)
+
 
 def get_boundaries(input_path: str, max_chunk_bytes: int, num_workers: int):
     with open(input_path, "rb") as file:
@@ -225,48 +240,64 @@ def get_boundaries(input_path: str, max_chunk_bytes: int, num_workers: int):
             num_chunks = max(min_chunks, num_workers)
 
         boundaries = find_chunk_boundaries(file, num_chunks, b"<|endoftext|>")
-        logging.info("File size: %d, max chunk bytes: %d, boundaries len: %d", file_size, max_chunk_bytes, len(boundaries))
+        logging.info(
+            "File size: %d, max chunk bytes: %d, boundaries len: %d", file_size,
+            max_chunk_bytes, len(boundaries))
     return boundaries
-    
 
-def pretokenize_file(input_path: str, special_tokens: list[str], max_chunk_bytes: int, num_workers: int):
-    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers) 
-    
+
+def pretokenize_file(
+        input_path: str, special_tokens: list[str],
+        max_chunk_bytes: int, num_workers: int):
+    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers)
+
     if num_workers == 1:
-        return pretokenize_file_single_worker(input_path, special_tokens, boundaries)
-    
+        return pretokenize_file_single_worker(
+            input_path, special_tokens, boundaries)
+
     chunks_per_worker = ceiling_division(len(boundaries)-1, num_workers)
 
     pool = Pool(num_workers)
-    all_args = ({"input_path": input_path, "special_tokens": special_tokens, "boundaries": boundaries[i*chunks_per_worker:((i+1)*chunks_per_worker+1)]} for i in range(num_workers))
+    all_args = (
+        {"input_path": input_path, "special_tokens": special_tokens,
+         "boundaries":
+         boundaries[i * chunks_per_worker: ((i + 1) * chunks_per_worker + 1)]}
+        for i in range(num_workers))
 
     pretokenization_counts = defaultdict(int)
-    for counter in pool.imap_unordered(pretokenize_file_single_worker_wrapper, all_args):
+    for counter in pool.imap_unordered(
+            pretokenize_file_single_worker_wrapper, all_args):
         for b, c in counter.items():
             pretokenization_counts[b] += c
 
     return pretokenization_counts
 
 
-def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str], 
+def train_tokenizer(input_path: str, vocab_size: int, special_tokens: list[str],
                     max_chunk_bytes: int = -1, num_workers: int = 1):
 
-    pretokenization_counts = stopwatch(pretokenize_file)(input_path, special_tokens, max_chunk_bytes, num_workers)
-        
+    pretokenization_counts = stopwatch(pretokenize_file)(
+        input_path, special_tokens, max_chunk_bytes, num_workers)
+
     num_merges = vocab_size - 256 - len(special_tokens)
     assert num_merges >= 0
-    vocab, merges = stopwatch(train_tokenizer_from_counters)(pretokenization_counts, num_merges, special_tokens)
+    vocab, merges = stopwatch(train_tokenizer_from_counters)(
+        pretokenization_counts, num_merges, special_tokens)
     return vocab, merges
 
+
 class Tokenizer(object):
-    def __init__(self, vocab: dict[int, bytes], merges: list[tuple[bytes, bytes]], special_tokens: list[str] | None = None):
+    def __init__(self, vocab: dict[int, bytes],
+                 merges: list[tuple[bytes, bytes]],
+                 special_tokens: list[str] | None = None):
         self._vocab = vocab
         self._reverse_vocab = {v: k for k, v in vocab.items()}
         self._merges = {pair: i for i, pair in enumerate(merges)}
         self._special_tokens = special_tokens if special_tokens is not None else []
         for t in self._special_tokens:
             assert t.encode("utf8") in self._reverse_vocab.keys()
-        self._special_tokens_regexp = special_tokens_regexp(self._special_tokens)
+        self._special_tokens_regexp = special_tokens_regexp(
+            self._special_tokens)
 
     @classmethod
     def from_files(cls, vocab_filepath, merges_filepath, special_tokens=None):
@@ -279,7 +310,7 @@ class Tokenizer(object):
 #        single_token = self._reverse_vocab.get(encoded_text)
 #        if single_token is not None:
 #            return [single_token]
-#        bytes_list = [(b).to_bytes() for b in encoded_text] 
+#        bytes_list = [(b).to_bytes() for b in encoded_text]
 #        pairs = defaultdict(list)
 #        pair_heap = PairHeap({})
 #        for i in range(len(bytes_list) - 1):
@@ -323,13 +354,12 @@ class Tokenizer(object):
 #
 #        return [self._reverse_vocab[b] for b in bytes_list if b != b""]
 
-
     def _encode_pretokenized(self, text: str):
         encoded_text = text.encode("utf8")
         single_token = self._reverse_vocab.get(encoded_text)
         if single_token is not None:
             return [single_token]
-        bytes_list = [(b).to_bytes() for b in encoded_text] 
+        bytes_list = [(b).to_bytes() for b in encoded_text]
         while True:
             best_index = None
             best_score = None
@@ -343,10 +373,10 @@ class Tokenizer(object):
                     best_index = i
             if best_index is None:
                 break
-            bytes_list[best_index] = b"".join(bytes_list[best_index:(best_index+2)])
+            bytes_list[best_index] = b"".join(
+                bytes_list[best_index:(best_index+2)])
             del bytes_list[best_index + 1]
         return [self._reverse_vocab[b] for b in bytes_list]
-
 
     def _encode_no_special_tokens(self, text: str):
         result = []
@@ -366,21 +396,25 @@ class Tokenizer(object):
         if last_start != len(text):
             result += self._encode_no_special_tokens(text[last_start:])
         return result
-    
+
     def encode_iterable(self, iterable: Iterable[str]) -> Iterator[int]:
         for text in iterable:
             for token in self.encode(text):
                 yield token
 
     def decode(self,  ids: list[int]) -> str:
-        return b"".join(self._vocab[token] for token in ids).decode("utf8", errors="replace")
+        return b"".join(
+            self._vocab[token] for token in ids).decode(
+            "utf8", errors="replace")
 
 
-def tokenize_file(tokenizer: Tokenizer, input_path: str, max_chunk_bytes: int, output_path: str):
-    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers=1) 
+def tokenize_file(
+        tokenizer: Tokenizer, input_path: str, max_chunk_bytes: int,
+        output_path: str):
+    boundaries = get_boundaries(input_path, max_chunk_bytes, num_workers=1)
 
     stats = {}
-    
+
     overall_start_time = time.time()
     with open(input_path, "rb") as file:
         with open(output_path, "wb") as outfile:
@@ -388,24 +422,27 @@ def tokenize_file(tokenizer: Tokenizer, input_path: str, max_chunk_bytes: int, o
             file.seek(start)
             for i, end in enumerate(boundaries[1:]):
                 chunk_size = end - start
-                logging.info("Reading a chunk of size: %d, (%d/%d)", chunk_size, i+1, len(boundaries) - 1)
+                logging.info("Reading a chunk of size: %d, (%d/%d)",
+                             chunk_size, i+1, len(boundaries) - 1)
                 chunk = file.read(chunk_size).decode("utf-8", errors="ignore")
                 start_time = time.time()
                 tokens = tokenizer.encode(chunk)
                 end_time = time.time()
                 token_bytes = np.array(tokens, dtype="uint16").tobytes()
                 outfile.write(token_bytes)
-                stats["num_input_bytes"] = stats.get("num_input_bytes", 0) + (end - start)
-                stats["num_output_bytes"] = stats.get("num_output_bytes", 0) + len(token_bytes)
+                stats["num_input_bytes"] = stats.get(
+                    "num_input_bytes", 0) + (end - start)
+                stats["num_output_bytes"] = stats.get(
+                    "num_output_bytes", 0) + len(token_bytes)
                 stats["num_tokens"] = stats.get("num_tokens", 0) + len(tokens)
-                stats["encode_time"] = stats.get("encode_time", 0) + (end_time - start_time)
-
+                stats["encode_time"] = stats.get(
+                    "encode_time", 0) + (end_time - start_time)
 
                 start = end
     overall_end_time = time.time()
     stats["total_time"] = overall_end_time - overall_start_time
     stats["throughput_MB/s"] = (boundaries[-1]/(2**20))/stats["total_time"]
     if stats.get("num_output_bytes"):
-        stats["compression_ratio_bytes/token"] = boundaries[-1]/stats.get("num_tokens")
+        stats["compression_ratio_bytes/token"] = boundaries[-1] / \
+            stats.get("num_tokens")
     return stats
-    
