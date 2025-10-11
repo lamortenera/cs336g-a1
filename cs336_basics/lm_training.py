@@ -161,6 +161,7 @@ class TokenLoader(object):
         self.arr = np.memmap(input_path, dtype=np.uint16)
         self.device = device
         self.reset()
+        print("Loaded tokens at ", input_path, ". Found ", len(self.arr), " tokens")
 
     def reset(self):
         self.generator = np.random.default_rng(self.seed)

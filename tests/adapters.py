@@ -171,7 +171,9 @@ def run_multihead_self_attention(
        "weights_qkv": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
        "weights_o": o_proj_weight
        })
-    return multihead_self_attention.forward(in_features, None)
+    seq = torch.arange(in_features.shape[-2])
+    attention_mask = seq <= seq[:, None]
+    return multihead_self_attention.forward(in_features, attention_mask)
     # t2 = torch.nn.MultiheadAttention(d_model, num_heads, bias=False, batch_first=True, 
     #                                  device=in_features.device, dtype=in_features.dtype)
     # t2.load_state_dict({
@@ -228,8 +230,13 @@ def run_multihead_self_attention_with_rope(
        "weights_qkv": torch.cat((q_proj_weight,k_proj_weight,v_proj_weight), axis=0),
        "weights_o": o_proj_weight
        })
-    return multihead_self_attention.forward(in_features, token_positions)
+    seq = torch.arange(in_features.shape[-2])
+    attention_mask = seq <= seq[:, None]
+    return multihead_self_attention.forward(in_features, attention_mask, token_positions)
 
+
+def run_get_attention_mask(tokens: Int[Tensor, "... sequence_length"], eos_token: int = 0):
+    return transformer.get_attention_mask(tokens, eos_token)
 
 def run_rope(
     d_k: int,

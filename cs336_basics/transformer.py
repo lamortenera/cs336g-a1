@@ -129,20 +129,18 @@ class MultiHeadSelfAttention(torch.nn.Module):
         self.weights_qkv = get_weights((3*d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         self.weights_o = get_weights((d_model, d_model), np.sqrt(2/(d_model + d_model)), device=device, dtype=dtype)
         
-        mask = torch.ones(max_seq_len, max_seq_len).tril() > 0
-        self.register_buffer("mask", mask, persistent=False)
-
         self.dtype= self.weights_qkv.dtype
         self.num_heads = num_heads
 
 
     def forward(self, x: Float[torch.Tensor, "... seq_len d_model"], 
+                mask: Bool[torch.Tensor, "... seq_len seq_len"],
                 token_positions: Optional[Float[torch.Tensor, "... seq_len"]]=None):
         orig_dtype = x.dtype
         x = x.to(self.dtype)
         QKV = einsum(x, self.weights_qkv, 
         "... seq_len d_model_in, d_model_out_3x d_model_in -> ... seq_len d_model_out_3x")
-        QKV = rearrange(QKV, "... seq_len (three num_heads d_k)-> three ... num_heads seq_len d_k", 
+        QKV = rearrange(QKV, "... seq_len (three num_heads d_k)-> three num_heads ... seq_len d_k", 
                         num_heads=self.num_heads, three=3)
         
         seq_len = x.shape[-2]
@@ -155,10 +153,10 @@ class MultiHeadSelfAttention(torch.nn.Module):
                 Q = self.rope.forward(Q, seq_len)
                 K = self.rope.forward(K, seq_len)
 
-        O = scaled_dot_product_attention(Q, K, V, self.mask[:seq_len,:seq_len])
+        O = scaled_dot_product_attention(Q, K, V, mask)
 
 
-        O = rearrange(O, "... num_heads seq_len d_k -> ... seq_len (num_heads d_k)")
+        O = rearrange(O, "num_heads ... seq_len d_k -> ... seq_len (num_heads d_k)")
         result = einsum(O, self.weights_o, "... seq_len d_model_in, d_model_out d_model_in -> ... seq_len d_model_out")
         return result.to(orig_dtype)
 
@@ -172,18 +170,30 @@ class TransformerBlock(torch.nn.Module):
         self.ff_norm = RMSNorm(d_model, device=device, dtype=dtype)
         self.ff = SwiGLU(d_model, d_ff, device=device, dtype=dtype)
 
-    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"]):
+    def forward(self, x: Float[torch.Tensor, "... seq_len d_model"], mask: Bool[torch.Tensor, "... seq_len seq_len"]):
         x_norm = self.mha_norm.forward(x)
-        x_mha = self.mha.forward(x_norm)
+        x_mha = self.mha.forward(x_norm, mask)
         x2 = x + x_mha
 
         x2_norm = self.ff_norm.forward(x2)
         x2_ff = self.ff.forward(x2_norm)
         return x2 + x2_ff
 
+def get_attention_mask(tokens: Int[torch.Tensor, "... seq_len"], 
+                       eos_token: Optional[int]=0) -> Bool[torch.Tensor, "... seq_len seq_len"]:
+    seq = torch.arange(tokens.shape[-1], device=tokens.device)
+    max_token_for_attention = seq[:, None]
+    if eos_token is None:
+        return seq <= max_token_for_attention
+
+    prev_token_is_eos = torch.roll(tokens == eos_token, 1, dims=-1)
+    min_token_for_attention = torch.cummax(prev_token_is_eos * seq, dim=-1).values[..., None]
+    return (seq >= min_token_for_attention) & (seq <= max_token_for_attention)
+
 class TransformerLM(torch.nn.Module):
     def __init__(self, *, vocab_size: int, num_layers: int, d_model: int, num_heads: int, 
-                 d_ff: int, max_seq_len: int, theta: Optional[float], device=None, dtype=None, attention_dtype=None):
+                 d_ff: int, max_seq_len: int, 
+                 theta: Optional[float], eos_token: int = 0, device=None, dtype=None, attention_dtype=None):
         super().__init__()
         self.embedding = Embedding(vocab_size, d_model, device=device, dtype=dtype)
         self.layers = torch.nn.ModuleList([])
@@ -192,17 +202,15 @@ class TransformerLM(torch.nn.Module):
                     TransformerBlock(d_model, num_heads, d_ff, max_seq_len, theta, device=device, dtype=dtype, attention_dtype=attention_dtype))
         self.final_norm = RMSNorm(d_model, device=device, dtype=dtype)
         self.output_proj = Linear(d_model, vocab_size, device=device, dtype=dtype)
+        self.eos_token = eos_token
 
     def forward(self, indices: Int[torch.Tensor, "... seq_len"]) -> Float[torch.Tensor, "... seq_len vocab_size"]:
+        mask = get_attention_mask(indices, self.eos_token)
         x = self.embedding.forward(indices)
         for layer in self.layers:
-            x = layer.forward(x)
+            x = layer.forward(x, mask)
         x = self.final_norm.forward(x)
         x = self.output_proj.forward(x)
         return x
 
-         
         
-
-        
-
