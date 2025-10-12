@@ -28,12 +28,12 @@ class SGD(torch.optim.Optimizer):
         return loss
 
 
-
 if __name__ == "__main__":
     print("Running command:\n" + " ".join(sys.argv[:]))
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--learning_rate", help="The learning rate", type=float, required=True)
+    parser.add_argument("--learning_rate",
+                        help="The learning rate", type=float, required=True)
 
     args = parser.parse_args()
 
@@ -46,7 +46,5 @@ if __name__ == "__main__":
         print(loss.cpu().item())
         loss.backward()
         opt.step()
-    
+
     print("Final weights: ", weights.cpu())
-
-
