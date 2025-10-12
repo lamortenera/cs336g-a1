@@ -227,6 +227,18 @@ def get_attention_mask(tokens: Int[torch.Tensor, "... seq_len"],
         prev_token_is_eos * seq, dim=-1).values[..., None]
     return (seq >= min_token_for_attention) & (seq <= max_token_for_attention)
 
+def top_p(probs: Float[torch.Tensor, "len"], top_p: float):
+    assert top_p > 0 and top_p < 1
+    s_probs, s_indices = torch.sort(probs, descending=True, stable=True)
+    cum_s_probs = torch.cumsum(s_probs, dim=-1)
+    idx = (cum_s_probs < top_p).sum() + 1
+    if idx >= len(s_probs):
+        return probs
+    indices_to_keep = s_indices[:idx]
+    result = torch.zeros(len(probs))
+    result[indices_to_keep] = probs[indices_to_keep]
+    result /= torch.sum(result)
+    return result
 
 class TransformerLM(torch.nn.Module):
     def __init__(

@@ -8,6 +8,7 @@ from typing import Optional
 import math
 import os
 import copy
+import pickle
 
 def cross_entropy(predictions: Float[torch.Tensor, "... vocab_size"],
                   labels: Int[torch.Tensor, "..."]) -> Float[torch.Tensor, "..."]:
@@ -169,27 +170,49 @@ class TokenLoader(object):
     def __next__(self):
         return get_batch(self.arr, self.generator, self.batch_size, self.context_length, self.device)
 
+def get_dtype(s: str) -> torch.dtype:
+    dtype = getattr(torch, s)
+    assert isinstance(dtype, torch.dtype)
+    assert dtype.is_floating_point
+    return dtype
+
+def to_np_arrays(d):
+        for k in d.keys():
+            if torch.is_tensor(d[k]):
+                d[k] = d[k].detach().numpy()
+            elif type(d[k]) == dict:
+                d[k] = to_np_arrays(d[k])
+        return d
+
+def from_np_arrays(d):
+        for k in d.keys():
+            if isinstance(d[k], np.ndarray):
+                d[k] = torch.Tensord([k])
+            elif type(d[k]) == dict:
+                d[k] = from_np_arrays(d[k])
+        return d
 
 def save_checkpoint(model, optimizer, iteration, out):
     directory = os.path.dirname(out)
     if not os.path.exists(directory):
         os.makedirs(directory)
 
-    def detach_values(d):
-        for k in d.keys():
-            if torch.is_tensor(d[k]):
-                d[k] = d[k].detach()
     d = {
-        "model": detach_values(model.state_dict()),
-        "optimizer": detach_values(optimizer.state_dict()),
+        "model": model.state_dict(),
+        "optimizer": optimizer.state_dict(),
         "iteration": iteration
     }
-    torch.save(d, out)
+    with open(out, 'wb') as handle:
+        pickle.dump(d, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 def load_checkpoint(src, model, optimizer):
-    d = torch.load(src)
+    with open(src, "rb") as handle:
+        d = pickle.load(handle)
+    
+    d = from_np_arrays(d)
     model.load_state_dict(d["model"])
-    optimizer.load_state_dict(d["optimizer"])
+    if optimizer is not None:
+        optimizer.load_state_dict(d["optimizer"])
     return d["iteration"]
 
 

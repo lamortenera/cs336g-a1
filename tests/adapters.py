@@ -238,6 +238,9 @@ def run_multihead_self_attention_with_rope(
 def run_get_attention_mask(tokens: Int[Tensor, "... sequence_length"], eos_token: int = 0):
     return transformer.get_attention_mask(tokens, eos_token)
 
+def run_top_p(probs: Float[Tensor, "len"], top_p: float):
+    return transformer.top_p(probs, top_p)
+
 def run_rope(
     d_k: int,
     theta: float,

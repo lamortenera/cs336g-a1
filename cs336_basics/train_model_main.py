@@ -144,15 +144,8 @@ def debug_memory():
             print("- " + str(e)[:100])
 
 
-def get_dtype(s: str) -> torch.dtype:
-    dtype = getattr(torch, s)
-    assert isinstance(dtype, torch.dtype)
-    assert dtype.is_floating_point
-    return dtype
-
-
 def train(args, run_name, logger):
-    dtype = get_dtype(args.dtype)
+    dtype = lm_training.get_dtype(args.dtype)
     device = args.device
 
     train_tokens = lm_training.TokenLoader(

@@ -15,7 +15,8 @@ from .adapters import (
     run_transformer_lm,
     run_linear,
     run_embedding,
-    run_get_attention_mask
+    run_get_attention_mask,
+    run_top_p
 )
 
 
@@ -30,7 +31,8 @@ def test_linear(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
     numpy_snapshot.assert_match(output)
 
 
-def test_embedding(numpy_snapshot, ts_state_dict, in_indices, vocab_size, d_model):
+def test_embedding(
+        numpy_snapshot, ts_state_dict, in_indices, vocab_size, d_model):
     embedding_weight = ts_state_dict[0]["token_embeddings.weight"]
     output = run_embedding(
         vocab_size=vocab_size,
@@ -43,7 +45,9 @@ def test_embedding(numpy_snapshot, ts_state_dict, in_indices, vocab_size, d_mode
 
 def test_swiglu(numpy_snapshot, ts_state_dict, in_embeddings, d_model, d_ff):
     w1_weight, w2_weight, w3_weight = [
-        ts_state_dict[0][f"layers.0.ffn.{k}.weight"] for k in ["w1", "w2", "w3"]]
+        ts_state_dict[0]
+        [f"layers.0.ffn.{k}.weight"]
+        for k in ["w1", "w2", "w3"]]
 
     actual_output = run_swiglu(
         d_model=d_model,
@@ -78,7 +82,8 @@ def test_4d_scaled_dot_product_attention(numpy_snapshot, q, k, v, mask):
     )
 
 
-def test_multihead_self_attention(numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict):
+def test_multihead_self_attention(
+        numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict):
     d, _ = ts_state_dict
     q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight = [
         d[f"layers.0.attn.{k}_proj.weight"] for k in ["q", "k", "v", "output"]
@@ -96,8 +101,8 @@ def test_multihead_self_attention(numpy_snapshot, in_embeddings, d_model, n_head
 
 
 def test_multihead_self_attention_with_rope(
-    numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict, n_keys, theta, pos_ids
-):
+        numpy_snapshot, in_embeddings, d_model, n_heads, ts_state_dict, n_keys,
+        theta, pos_ids):
     d, _ = ts_state_dict
     q_proj_weight, k_proj_weight, v_proj_weight, o_proj_weight = [
         d[f"layers.0.attn.{k}_proj.weight"] for k in ["q", "k", "v", "output"]
@@ -119,8 +124,8 @@ def test_multihead_self_attention_with_rope(
 
 
 def test_transformer_lm(
-    numpy_snapshot, vocab_size, n_keys, d_model, n_layers, n_heads, d_ff, theta, ts_state_dict, in_indices
-):
+        numpy_snapshot, vocab_size, n_keys, d_model, n_layers, n_heads, d_ff,
+        theta, ts_state_dict, in_indices):
     state_dict, _ = ts_state_dict
 
     actual_output = run_transformer_lm(
@@ -138,8 +143,8 @@ def test_transformer_lm(
 
 
 def test_transformer_lm_truncated_input(
-    numpy_snapshot, vocab_size, n_keys, d_model, n_layers, n_heads, d_ff, theta, ts_state_dict, in_indices
-):
+        numpy_snapshot, vocab_size, n_keys, d_model, n_layers, n_heads, d_ff,
+        theta, ts_state_dict, in_indices):
     in_indices_truncated = in_indices[..., : in_indices.shape[-1] // 2]
     truncated_actual_output = run_transformer_lm(
         vocab_size=vocab_size,
@@ -159,7 +164,9 @@ def test_transformer_lm_truncated_input(
     )
 
 
-def test_transformer_block(numpy_snapshot, ts_state_dict, in_embeddings, d_model, n_heads, d_ff, n_keys, theta):
+def test_transformer_block(
+        numpy_snapshot, ts_state_dict, in_embeddings, d_model, n_heads, d_ff,
+        n_keys, theta):
     block_weights = {k.replace("layers.0.", ""): v for k,
                      v in ts_state_dict[0].items() if "layers.0." in k}
 
@@ -184,15 +191,16 @@ def test_rmsnorm(numpy_snapshot, ts_state_dict, in_embeddings):
     d_model = reference_weights.shape[0]
 
     actual_output = run_rmsnorm(
-        d_model=d_model, eps=1e-5, weights=reference_weights, in_features=in_embeddings)
+        d_model=d_model, eps=1e-5, weights=reference_weights,
+        in_features=in_embeddings)
 
     numpy_snapshot.assert_match(actual_output, atol=1e-6)
 
 
 def test_rope(numpy_snapshot, in_embeddings, d_model, theta, n_queries, pos_ids):
     output = run_rope(
-        d_model, theta=theta, max_seq_len=n_queries, in_query_or_key=in_embeddings, token_positions=pos_ids
-    )
+        d_model, theta=theta, max_seq_len=n_queries,
+        in_query_or_key=in_embeddings, token_positions=pos_ids)
     numpy_snapshot.assert_match(output, atol=1e-6)
 
 
@@ -210,40 +218,33 @@ def test_silu_matches_pytorch():
 
 
 def test_get_attention_mask():
-    numpy.testing.assert_equal(run_get_attention_mask(torch.tensor([1, 2, 3])).detach().numpy(),
-                               numpy.array([[True, False, False],
-                                            [True, True, False],
-                                            [True, True, True],
-                                            ])
-                               )
-    numpy.testing.assert_equal(run_get_attention_mask(torch.tensor([[[1, 2, 3],
-                                                                     [4, 5, 6]],
-                                                                    [[3, 2, 1],
-                                                                     [6, 5, 4]],
-                                                                    ])).detach().numpy(),
-                               numpy.array(
-                                   [[[
-                                       [True, False, False],
-                                       [True, True, False],
-                                       [True, True, True],
-                                   ],
-                                       [
-                                       [True, False, False],
-                                       [True, True, False],
-                                       [True, True, True],
-                                   ]],
-                                       [[
-                                           [True, False, False],
-                                           [True, True, False],
-                                           [True, True, True],
-                                       ],
-                                       [
-                                           [True, False, False],
-                                           [True, True, False],
-                                           [True, True, True],
-                                       ]],
-                                   ])
-                               )
+    numpy.testing.assert_equal(
+        run_get_attention_mask(
+            torch.tensor([1, 2, 3])).detach().numpy(),
+        numpy.array(
+            [[True, False, False],
+             [True, True, False],
+             [True, True, True],]))
+    numpy.testing.assert_equal(
+        run_get_attention_mask(
+            torch.tensor(
+                [[[1, 2, 3],
+                  [4, 5, 6]],
+                 [[3, 2, 1],
+                  [6, 5, 4]],])).detach().numpy(),
+        numpy.array(
+            [[[[True, False, False],
+               [True, True, False],
+               [True, True, True],],
+              [[True, False, False],
+               [True, True, False],
+               [True, True, True],]],
+             [[[True, False, False],
+               [True, True, False],
+               [True, True, True],],
+              [[True, False, False],
+               [True, True, False],
+               [True, True, True],]],]))
 
     numpy.testing.assert_equal(run_get_attention_mask(torch.tensor([1, 2, 3, 0, 4, 5, 0, 6, 7])).detach().numpy(),
                                numpy.array([[True, False, False, False, False, False, False, False, False],  # nopep8
@@ -258,19 +259,34 @@ def test_get_attention_mask():
                                             ])
                                )
 
-    numpy.testing.assert_equal(run_get_attention_mask(torch.tensor([[0, 2, 3],
-                                                                    [1, 0, 3],
-                                                                    [1, 2, 0],
-                                                                    ])).detach().numpy(),
-                               numpy.array([[[True, False, False],
-                                            [False, True, False],
-                                            [False, True, True],
-                                             ],
-                                            [[True, False, False],
-                                            [True, True, False],
-                                            [False, False, True],
-                                             ],
-                                            [[True, False, False],
-                                            [True, True, False],
-                                            [True, True, True],
-                                             ]]))
+    numpy.testing.assert_equal(
+        run_get_attention_mask(
+            torch.tensor(
+                [[0, 2, 3],
+                 [1, 0, 3],
+                 [1, 2, 0],])).detach().numpy(),
+        numpy.array(
+            [[[True, False, False],
+              [False, True, False],
+              [False, True, True],],
+             [[True, False, False],
+              [True, True, False],
+              [False, False, True],],
+             [[True, False, False],
+              [True, True, False],
+              [True, True, True],]]))
+
+
+def test_top_p():
+    t = torch.Tensor([0.1, 0.2, 0.05, 0.15, 0.3, 0.1, 0.1])
+    numpy.testing.assert_allclose(
+        run_top_p(t, 0.1).detach().numpy(),
+        numpy.array([0.0, 0.0, 0.0, 0.0, 1, 0.0, 0.0]))
+
+    numpy.testing.assert_allclose(
+        run_top_p(t, 0.4).detach().numpy(),
+        numpy.array([0.0, 0.4, 0.0, 0.0, 0.6, 0.0, 0.0]))
+
+    numpy.testing.assert_allclose(
+        run_top_p(torch.Tensor([0.25, 0.25, 0.25, 0.25]), 0.5).detach().numpy(),
+        numpy.array([0.5, 0.5, 0.0, 0.0]))
